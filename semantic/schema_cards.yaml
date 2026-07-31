@@ -1,5 +1,5 @@
-olist_orders_dataset:                 # table name — must match exactly what's in olist.db
-  description: >                      # the '>' means "fold this multi-line text into one paragraph"
+olist_orders_dataset:                 
+  description: >                      
     One row per order. This is the central table — most questions
     join out from here to items, payments, reviews, or customers.
   columns:
@@ -49,3 +49,234 @@ olist_orders_dataset:                 # table name — must match exactly what's
       note: "one order can have multiple payment rows (installments) — aggregate first"
     - table: olist_order_reviews_dataset
       "on": order_id = order_id
+
+olist_customers_dataset:
+  description: >
+    One row per order-level customer record. Note: customer_id here is
+    NOT a stable person identity — it is generated per order, so the
+    same real person can have multiple customer_id values across
+    different orders. customer_unique_id is the actual stable identity
+    to use when counting distinct real people.
+  columns:
+    customer_id:
+      type: text
+      description: >
+        Per-order customer identifier. Joins to olist_orders_dataset.customer_id.
+        Do NOT use this to count unique real customers - it is not stable
+        across orders for the same person.
+    customer_unique_id:
+      type: text
+      description: >
+        The real, stable identity of the customer across all their orders.
+        Use this column when a question asks about unique/distinct customers.
+    customer_zip_code_prefix:
+      type: text
+      description: First few digits of the customer's zip code.
+    customer_city:
+      type: text
+      description: City name of the customer.
+    customer_state:
+      type: text
+      description: >
+        Two-letter Brazilian state code. See semantic/categorical_values.md
+        for the verified real list of 27 values.
+  joins:
+    - table: olist_orders_dataset
+      "on": customer_id = customer_id
+
+olist_order_items_dataset:
+  description: >
+    One row per item within an order. An order with 3 products has
+    3 rows here. Must aggregate (SUM/GROUP BY order_id) before joining
+    back to olist_orders_dataset to avoid duplicating order-level data.
+  columns:
+    order_id:
+      type: text
+      description: Joins to olist_orders_dataset.order_id. Not unique here - repeats per item.
+    order_item_id:
+      type: integer
+      description: Sequence number of this item within the order (1, 2, 3...).
+    product_id:
+      type: text
+      description: Joins to olist_products_dataset.product_id.
+    seller_id:
+      type: text
+      description: Joins to olist_sellers_dataset.seller_id.
+    price:
+      type: real
+      description: Price of this item, in Brazilian Real (BRL).
+    freight_value:
+      type: real
+      description: Shipping cost for this item, in BRL.
+  joins:
+    - table: olist_orders_dataset
+      "on": order_id = order_id
+    - table: olist_products_dataset
+      "on": product_id = product_id
+    - table: olist_sellers_dataset
+      "on": seller_id = seller_id
+
+olist_order_payments_dataset:
+  description: >
+    One row per payment installment on an order. An order paid in
+    3 installments has 3 rows here. Aggregate (SUM payment_value,
+    GROUP BY order_id) before joining back to orders.
+  columns:
+    order_id:
+      type: text
+      description: Joins to olist_orders_dataset.order_id. Not unique - repeats per installment.
+    payment_sequential:
+      type: integer
+      description: Order of this payment among possibly multiple payments for the order.
+    payment_type:
+      type: text
+      description: >
+        One of: boleto, credit_card, debit_card, not_defined, voucher.
+        See semantic/categorical_values.md - not_defined is a real value,
+        not in PROJECT.md's original guessed list.
+    payment_installments:
+      type: integer
+      description: Number of installments this payment is split into.
+    payment_value:
+      type: real
+      description: Amount of this payment, in BRL.
+  joins:
+    - table: olist_orders_dataset
+      "on": order_id = order_id
+
+olist_order_reviews_dataset:
+  description: >
+    One row per review left on an order. Most reviews carry only a
+    score - review_comment_title and review_comment_message are
+    mostly NULL (only ~12% and ~41% filled respectively).
+  columns:
+    review_id:
+      type: text
+      description: Unique ID for this review.
+    order_id:
+      type: text
+      description: Joins to olist_orders_dataset.order_id.
+    review_score:
+      type: integer
+      description: Rating from 1 to 5. Always present, never NULL.
+    review_comment_title:
+      type: text
+      description: Optional short title. Mostly NULL - do not assume it exists.
+    review_comment_message:
+      type: text
+      description: Optional free-text comment. Mostly NULL - do not assume it exists.
+    review_creation_date:
+      type: datetime
+      description: When the review was created.
+    review_answer_timestamp:
+      type: datetime
+      description: When the seller/platform responded to the review, if applicable.
+  joins:
+    - table: olist_orders_dataset
+      "on": order_id = order_id
+
+olist_products_dataset:
+  description: >
+    One row per product. 610 products have a NULL product_category_name -
+    genuinely uncategorized, not a data error.
+  columns:
+    product_id:
+      type: text
+      description: Unique ID for this product.
+    product_category_name:
+      type: text
+      description: >
+        Category name in Portuguese. Can be NULL for ~610 products.
+        See semantic/categorical_values.md for the full verified list
+        of real category values. Join to
+        product_category_name_translation for the English name.
+    product_weight_g:
+      type: real
+      description: Product weight in grams.
+    product_length_cm:
+      type: real
+      description: Product length in centimeters.
+    product_height_cm:
+      type: real
+      description: Product height in centimeters.
+    product_width_cm:
+      type: real
+      description: Product width in centimeters.
+  joins:
+    - table: olist_order_items_dataset
+      "on": product_id = product_id
+    - table: product_category_name_translation
+      "on": product_category_name = product_category_name
+
+olist_sellers_dataset:
+  description: >
+    One row per seller. 3,095 sellers total, seller_id is unique per
+    row (no duplicates). Sellers are not present in every state - see
+    semantic/categorical_values.md for which states have no sellers.
+  columns:
+    seller_id:
+      type: text
+      description: Unique ID for this seller.
+    seller_zip_code_prefix:
+      type: text
+      description: First few digits of the seller's zip code.
+    seller_city:
+      type: text
+      description: City name of the seller.
+    seller_state:
+      type: text
+      description: >
+        Two-letter Brazilian state code. Missing AL, AP, RR, TO compared
+        to customer_state - no sellers are based in those 4 states.
+        See semantic/categorical_values.md.
+  joins:
+    - table: olist_order_items_dataset
+      "on": seller_id = seller_id
+
+olist_geolocation_dataset:
+  description: >
+    Zip-code-prefix to lat/lng lookup. By far the largest table
+    (over 1,000,000 rows) - many lat/lng rows per zip prefix, NOT a
+    clean 1:1 lookup. Needs dedup or aggregation (e.g. AVG lat/lng
+    per prefix) before being joined to anything, or it will multiply
+    row counts badly.
+  columns:
+    geolocation_zip_code_prefix:
+      type: text
+      description: Zip code prefix - joins loosely to customer/seller zip prefixes.
+    geolocation_lat:
+      type: real
+      description: Latitude.
+    geolocation_lng:
+      type: real
+      description: Longitude.
+    geolocation_city:
+      type: text
+      description: City name as recorded at this lat/lng point.
+    geolocation_state:
+      type: text
+      description: Two-letter Brazilian state code.
+  joins:
+    - table: olist_customers_dataset
+      "on": geolocation_zip_code_prefix = customer_zip_code_prefix
+      note: "loose join on zip prefix, not a guaranteed unique match - aggregate first"
+    - table: olist_sellers_dataset
+      "on": geolocation_zip_code_prefix = seller_zip_code_prefix
+      note: "loose join on zip prefix, not a guaranteed unique match - aggregate first"
+
+product_category_name_translation:
+  description: >
+    Lookup table only - 71 rows. Maps Portuguese category names to
+    English. Not every product_category_name value is guaranteed to
+    have a matching row here - not yet verified (flagged in handoff
+    notes as something to check).
+  columns:
+    product_category_name:
+      type: text
+      description: Portuguese category name - joins to olist_products_dataset.
+    product_category_name_english:
+      type: text
+      description: English translation of the category name.
+  joins:
+    - table: olist_products_dataset
+      "on": product_category_name = product_category_name
