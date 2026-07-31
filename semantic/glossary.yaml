@@ -1,0 +1,86 @@
+late_delivery:
+  definition: >
+    An order where the customer received it later than the estimated
+    delivery date promised at purchase.
+  sql_logic: >
+    order_delivered_customer_date > order_estimated_delivery_date
+    (both columns in olist_orders_dataset)
+  notes: >
+    Decision: orders with a NULL order_delivered_customer_date
+    (never delivered at all) are counted as late.
+    Reason: if it hasn't arrived by now, it is at minimum as late as
+    the worst "late" order that did eventually arrive - arguably
+    worse, since there's no delivery date at all to compare against.
+    Excluding these would make the late-delivery rate look better
+    than it actually is, by quietly ignoring the worst cases.
+
+unique_customer:
+  definition: >
+    The count of distinct real customers, not distinct order-level
+    records. Because customer_id is generated fresh per order, the
+    same real person can appear as multiple different customer_id
+    values across their orders.
+  sql_logic: >
+    COUNT(DISTINCT customer_unique_id)
+    (NOT COUNT(DISTINCT customer_id) - that overcounts repeat buyers)
+    (column is in olist_customers_dataset)
+  notes: >
+    Decision: always use customer_unique_id whenever a question asks
+    about "how many customers," "unique customers," or "distinct
+    customers." Using customer_id instead is a common mistake that
+    silently inflates the real customer count - a repeat buyer with
+    5 orders would wrongly count as 5 different customers.
+
+top_seller:
+  definition: >
+    The seller with the highest total revenue (product price only,
+    not including freight/shipping) across all their order items.
+  sql_logic: >
+    SUM(price) GROUP BY seller_id ORDER BY SUM(price) DESC LIMIT 1
+    (price column is in olist_order_items_dataset)
+  notes: >
+    Decision: "top seller" defaults to highest total revenue by
+    product price, since that's the most common meaning in casual
+    business usage. Alternate interpretations, only used if the
+    question explicitly asks for them:
+    - Most orders: highest COUNT(DISTINCT order_id) per seller_id.
+    - Best average review score: highest AVG(review_score), joined
+      through order_items -> orders -> reviews.
+
+average_delivery_time:
+  definition: >
+    The average time taken for orders to be delivered, calculated as
+    the difference between the order purchase date and the actual
+    delivery date.
+  sql_logic: >
+    AVG(julianday(order_delivered_customer_date) - julianday(order_purchase_timestamp))
+    (both columns in olist_orders_dataset - SQLite has no DATEDIFF;
+    julianday() converts a date to a day-number, so subtracting two
+    gives the number of days between them)
+  notes: >
+    Decision: orders with a NULL order_delivered_customer_date
+    (never delivered at all) are excluded from this average. Including
+    them would result in an undefined or skewed average, as you cannot
+    compute a meaningful delivery time for orders that were never
+    delivered.
+
+unanswerable_question:
+  definition: >
+    A question this dataset genuinely cannot answer, because the
+    required data doesn't exist here at all - not a query that's
+    merely hard to write.
+  sql_logic: >
+    N/A - no query should be attempted. The correct response is to
+    say plainly that the data doesn't support this question.
+  notes: >
+    Examples of genuinely out-of-scope questions for this dataset:
+    - Anything about international/cross-border trade or export
+      destinations - this is domestic Brazilian e-commerce data only,
+      see PROJECT.md section 1's honest framing.
+    - Anything about specific product names, brand names, or SKUs -
+      only product_category_name exists, not individual product names.
+    - Anything about employees, warehouses, or internal company
+      operations - not present in any of the 9 tables.
+    - Anything requiring real-time or future data - this dataset is
+      historical, 2016-2018 only.
+
