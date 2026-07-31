@@ -4,6 +4,40 @@ Newest entries at the top. A few lines each.
 
 ---
 
+## 2026-07-31 — Antigravity
+**Phase:** 2 (PATH/venv fix, unblocking prior session)
+**Result:** Found and fixed the real cause of the python/venv PATH bug.
+PowerShell profile (Microsoft.PowerShell_profile.ps1) had a hardcoded
+`Set-Alias python 'C:\...\pythoncore-3.14-64\python.exe'` from an earlier
+edit — PowerShell aliases override PATH, so this silently beat the venv's
+PATH prepend every single time, even right after activation, even in a
+fresh window. Replaced the alias with appending the system Python dir to
+PATH instead (so it's only a fallback, not an override). Verified: plain
+`python` now correctly resolves to venv's python.exe after activation.
+scratch_ast.py re-run successfully, confirms sqlglot AST output as before.
+**Worth remembering:** If `python` ever misbehaves again on this machine,
+check `$PROFILE` for stray Set-Alias lines before anything else — this
+was the actual root cause both times, not app execution aliases.
+
+## 2026-07-31 — Claude (chat)
+**Phase:** 2 (blocked before real progress)
+**Result:** Started Phase 2 (validator.py). Confirmed sqlglot installed
+correctly and parses SQL into an AST as expected (tested manually via
+`.\venv\Scripts\python.exe src\scratch_ast.py` — printed a clean Select
+node tree with expressions/from_/where). No validator.py logic written yet.
+**Worth remembering:** Hit a Windows PATH/venv bug that ate the whole
+session — plain `python` intermittently resolves to system Python 3.14
+(`C:\Users\Lenovo\AppData\Local\Python\pythoncore-3.14-64\python.exe`)
+instead of the venv's python, even right after `.\venv\Scripts\Activate.ps1`
+and even in a brand-new PowerShell window. Calling the venv's python.exe
+by full path (`.\venv\Scripts\python.exe`) always works correctly — the
+venv itself is fine, this is purely a PATH resolution issue. Checked
+"Manage app execution aliases" — python.exe/python3.exe already toggled
+Off, so that's not the cause. Suspect the newer "Python install manager"
+(py.exe/pymanager.exe) intercepting the bare `python` command instead.
+Not resolved — handing off to Antigravity to fix directly on the machine
+rather than burn more chat turns guessing blind. Next session: fix PATH
+issue first, then resume Phase 2 from scratch (validator.py not started).
 
 ## 2026-07-31 — Claude (chat)
 **Phase:** Phase 1 — complete
