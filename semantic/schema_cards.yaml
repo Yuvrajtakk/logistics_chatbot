@@ -1,0 +1,51 @@
+olist_orders_dataset:                 # table name — must match exactly what's in olist.db
+  description: >                      # the '>' means "fold this multi-line text into one paragraph"
+    One row per order. This is the central table — most questions
+    join out from here to items, payments, reviews, or customers.
+  columns:
+    order_id:
+      type: text
+      description: Unique ID for this order. Primary key.
+    customer_id:
+      type: text
+      description: >
+        Foreign key to olist_customers_dataset.customer_id.
+        Links this order to the customer who placed it.
+    order_status:
+      type: text
+      description: >
+        One of: approved, canceled, created, delivered, invoiced,
+        processing, shipped, unavailable. See semantic/categorical_values.md
+        for the verified real ground truth.
+    order_purchase_timestamp:
+      type: datetime
+      description: When the order was placed.
+    order_approved_at:
+      type: datetime
+      description: >
+        When payment was approved. Can be NULL — an order canceled
+        before approval has no value here. Not missing data, a real
+        lifecycle stage.
+    order_delivered_carrier_date:
+      type: datetime
+      description: When the order was handed to the shipping carrier. Can be NULL.
+    order_delivered_customer_date:
+      type: datetime
+      description: >
+        When the customer actually received the order. Can be NULL if
+        never delivered. Compare against order_estimated_delivery_date
+        to determine lateness (see glossary.yaml).
+    order_estimated_delivery_date:
+      type: datetime
+      description: The delivery date promised to the customer at purchase time.
+  joins:
+    - table: olist_customers_dataset
+      "on": customer_id = customer_id
+    - table: olist_order_items_dataset
+      "on": order_id = order_id
+      note: "one order can have multiple item rows — aggregate before joining back to orders"
+    - table: olist_order_payments_dataset
+      "on": order_id = order_id
+      note: "one order can have multiple payment rows (installments) — aggregate first"
+    - table: olist_order_reviews_dataset
+      "on": order_id = order_id
