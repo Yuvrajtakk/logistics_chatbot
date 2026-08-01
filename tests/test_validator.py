@@ -53,3 +53,13 @@ def test_cte_join_passes():
 def test_multi_statement_injection_blocked():
     with pytest.raises(Exception):
         validate_sql("SELECT * FROM olist_orders_dataset; DROP TABLE olist_orders_dataset;")
+
+def test_subquery_to_banned_table_blocked():
+    sql = """
+        SELECT order_id
+        FROM olist_orders_dataset
+        WHERE order_id IN (SELECT order_id FROM secret_table)
+    """
+    with pytest.raises(ValidationError):
+        validate_sql(sql)
+
