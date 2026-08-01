@@ -4,6 +4,68 @@ Newest entries at the top. A few lines each.
 
 ---
 
+## 2026-08-01 — Claude (chat)
+**Phase:** 3 — Categorical Check
+**Result:** src/categorical_check.py built — loads real distinct values
+for 5 categorical columns from olist.db, extracts (column, value) pairs
+from EQ and IN nodes via sqlglot, flags any value not in the real set.
+Handles reversed EQ ('value' = column) and IN clauses with mixed
+good/bad values. Never auto-corrects (Rule 9). tests/test_categorical_check.py
+4/4 passing.
+**Worth remembering:** IN nodes use plural `expressions` (a list), EQ
+uses singular `expression` (one item) -- easy to mix up. IN with a
+subquery (not a literal list) is deliberately skipped, not handled yet.
+
+## 2026-08-01 — Claude (chat)
+**Phase:** 2 — complete
+**Result:** Built and tested both safety-layer files.
+- `src/validator.py`: parses SQL with sqlglot into an AST, checks (1) root
+  node is `exp.Select` (blocks DELETE/DROP/UPDATE/etc structurally, not by
+  text matching), (2) every table found via `find_all(exp.Table)` is in a
+  9-table allow-list (set difference check), then attaches a LIMIT 1000 via
+  `tree.limit()`. `tests/test_validator.py` — 8/8 passing: valid select,
+  DELETE blocked, DROP blocked, disallowed table blocked, valid join,
+  CTE join, multi-statement injection blocked, and a self-authored subquery-
+  to-banned-table attack (buried inside a WHERE ... IN (...) subquery).
+- `src/execute.py`: opens SQLite via `file:...?mode=ro` URI (uri=True) —
+  a second independent safety layer that's physically incapable of writing,
+  not just policy-enforced. `run_query()` wraps sqlite3.Error into a custom
+  `ExecutionError`. `run_with_repair()` is a plain Python while-loop, max 2
+  retries, calling an injected `regenerate_fn(failed_sql, error_message)` —
+  no LLM wired in yet, tested with stand-in functions. `tests/test_execute.py`
+  — 5/5 passing, including `test_connection_is_actually_read_only`, which
+  proves sqlite3 itself raises `OperationalError` on an attempted INSERT
+  through the read-only connection.
+**Worth remembering:**
+- Real bug caught and fixed: `find_all(exp.Table)` cannot distinguish a real
+  table from a CTE alias (`WITH recent_orders AS (...)`) — both look like
+  "a table being read from" to sqlglot. Fix: collect CTE names via
+  `find_all(exp.CTE)` and subtract them from `tables_used` before checking
+  the allow-list. Without this, any query using a CTE would be wrongly
+  refused. Worth remembering for any future AST-based table-extraction code.
+- Off-by-one logic in the repair loop was deliberately checked by hand:
+  `attempt` increments BEFORE the `attempt > MAX_RETRIES` check, giving
+  exactly 3 total tries (1 original + 2 retries) for `MAX_RETRIES = 2`. Using
+  `>=` instead would silently change the retry count by one — confirmed
+  understood, not just copy-pasted.
+- Environment detour: a stray `Set-Alias python ...pythoncore-3.14-64...`
+  line in the PowerShell profile was overriding the venv's PATH prepend
+  every time, even after activation. Fixed by Antigravity (replaced
+  Set-Alias with an appended PATH fallback). Confirmed dead — plain
+  `python` now correctly resolves to the venv.
+- Minor file-location slip: created `test_execute.py` while `cd`'d into
+  `src/`, which nested it as `src/tests/test_execute.py` instead of the
+  real `tests/` at repo root. Moved and cleaned up. Lesson: always confirm
+  `pwd` before creating new files if unsure which folder you're standing in.
+- New standing instruction from Yuraj: all code, going forward, should be
+  fully comment-loaded by default (line-by-line), no need to ask each time.
+**Next up:** Phase 3 — `categorical_check.py`. Ground truth values were
+already recorded in Phase 0 (`semantic/categorical_values.md`), including
+the `not_defined` 5th payment_type and the 4 missing seller_state values.
+Phase 3 needs to: query real distinct values at startup, extract literal
+string values compared against categorical columns from validated SQL,
+check membership, and flag (never auto-correct) on mismatch.
+
 ## 2026-07-31 — Antigravity
 **Phase:** 2 (PATH/venv fix, unblocking prior session)
 **Result:** Found and fixed the real cause of the python/venv PATH bug.
