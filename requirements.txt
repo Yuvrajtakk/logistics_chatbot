@@ -1,3 +1,7 @@
 pandas
 sqlglot
 pytest
+python-dotenv
+langchain-groq
+langchain-google-genai
+langchain-ollama
