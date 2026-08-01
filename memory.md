@@ -5,6 +5,22 @@ Newest entries at the top. A few lines each.
 ---
 
 ## 2026-08-01 — Claude (chat)
+**Phase:** 4 — Gold Test Set
+**Result:** eval/gold_set.jsonl built — 18 hand-written cases: 8 normal,
+2 bad_categorical, 2 should_block, 1 bad_table_name, 1 bad_column_name,
+2 unanswerable. eval/run_eval.py built, wired to real validate_sql()
+(raises ValidationError) and real run_query() (returns columns, rows
+tuple, raises ExecutionError) -- initial draft guessed dict-return
+shapes for both and had to be corrected against the real files.
+18/18 passed on first full run after the fix.
+**Worth remembering:** validator.py's row cap (MAX_ROWS=1000) is
+confirmed genuinely active -- case #6 (seller with most orders, no
+LIMIT in the query) returned exactly 1000 rows, not the full table,
+proving the cap isn't just decoration. Harness now proven correct
+BEFORE any LLM is connected -- future low accuracy scores can be
+blamed on the model, not a broken test.
+
+## 2026-08-01 — Claude (chat)
 **Phase:** 3 — Categorical Check
 **Result:** src/categorical_check.py built — loads real distinct values
 for 5 categorical columns from olist.db, extracts (column, value) pairs
