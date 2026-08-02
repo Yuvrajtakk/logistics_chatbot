@@ -16,6 +16,10 @@ Why this file exists (plain English):
     hands the decision back to the user. (Hard Rule 9 in PROJECT.md)
 """
 
+# difflib is Python's built-in library for comparing strings and
+# finding the closest matches -- no install needed, same spirit as
+# sqlite3 already being built-in.
+import difflib
 import sqlite3
 import sqlglot
 from sqlglot import exp
@@ -81,7 +85,32 @@ def load_real_values(db_path="data/olist.db"):
 
     conn.close()
     return real_values
+# ----------------------------------------------------------------------
+# STEP 2b: Suggest what a flagged value MIGHT have meant (never auto-fix).
+# ----------------------------------------------------------------------
 
+def suggest_similar_value(bad_value: str, real_set: set):
+    """
+    Given a wrong value and the set of real valid values for that
+    column, returns the single closest real match, or None if nothing
+    is close enough to be a useful suggestion.
+
+    This is ONLY a suggestion. Per Rule 9, categorical_check.py never
+    auto-corrects -- this function's return value gets shown to the
+    user alongside the flag, never substituted into the query itself.
+
+    n=1: only want the single best guess, not a list of options.
+    cutoff=0.6: difflib's similarity score runs 0.0 (nothing alike) to
+        1.0 (identical). 0.6 is difflib's own suggested default --
+        loose enough to catch real typos ('cancelled' vs 'canceled'
+        scores well above this), tight enough to not suggest something
+        wildly unrelated just because SOME letters happen to overlap.
+    """
+    matches = difflib.get_close_matches(bad_value, real_set, n=1, cutoff=0.6)
+
+    # get_close_matches returns a list (possibly empty). We only want
+    # the single best match, or None if the list came back empty.
+    return matches[0] if matches else None
 
 # ----------------------------------------------------------------------
 # STEP 3: Pull out (column, value) pairs from a parsed SQL tree.
@@ -146,30 +175,13 @@ def extract_comparisons(tree):
 # STEP 4: The main check -- combine steps 2 and 3, decide pass/fail.
 # ----------------------------------------------------------------------
 def check_categoricals(sql_text, real_values):
-    """
-    Takes a SQL string (already passed validator.py) and the real_values
-    dictionary from load_real_values().
-
-    Returns a dictionary:
-        {
-            "ok": True/False,
-            "problems": [ (column, bad_value), ... ]   # empty list if ok
-        }
-
-    Design choice: this checks the WHOLE query and collects ALL bad
-    values, rather than stopping at the first one -- so if a query has
-    two typos, you find out about both at once instead of fixing one,
-    re-running, and hitting the second.
-    """
     tree = sqlglot.parse_one(sql_text)
     pairs = extract_comparisons(tree)
 
     problems = []
+    suggestions = {}  # NEW: (column, bad_value) -> suggested real value, or None
 
     for column_name, value in pairs:
-        # Only check columns we actually track (order_status, etc).
-        # A comparison like "customer_id = 'abc123'" is correctly
-        # ignored -- customer_id has no fixed real-world value list.
         if column_name not in CATEGORICAL_COLUMNS:
             continue
 
@@ -178,7 +190,14 @@ def check_categoricals(sql_text, real_values):
         if value not in real_set:
             problems.append((column_name, value))
 
+            # NEW: try to find the closest real value as a suggestion.
+            # Stored separately from `problems` -- problems stays the
+            # exact same shape it always was, so nothing that already
+            # reads it (run_eval.py, the existing tests) breaks.
+            suggestions[(column_name, value)] = suggest_similar_value(value, real_set)
+
     return {
         "ok": len(problems) == 0,
         "problems": problems,
+        "suggestions": suggestions,  # NEW
     }

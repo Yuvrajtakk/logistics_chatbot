@@ -65,3 +65,46 @@ def test_non_categorical_column_is_ignored():
         real_values,
     )
     assert result["ok"] is True
+
+def test_suggestion_offered_for_close_typo():
+    """
+    'cancelled' (two Ls) vs the real 'canceled' (one L) should not
+    just be flagged -- it should come with a suggestion pointing at
+    the real value, since they're a close match.
+    """
+    real_values = load_real_values()
+    result = check_categoricals(
+        "SELECT * FROM olist_orders_dataset WHERE order_status = 'cancelled'",
+        real_values,
+    )
+    suggestion = result["suggestions"][("order_status", "cancelled")]
+    assert suggestion == "canceled"
+
+
+def test_no_suggestion_for_wildly_unrelated_value():
+    """
+    A value with nothing genuinely close in the real set should get
+    NO suggestion (None) rather than a misleading, unrelated guess.
+    """
+    real_values = load_real_values()
+    result = check_categoricals(
+        "SELECT * FROM olist_orders_dataset WHERE order_status = 'xyzabc123'",
+        real_values,
+    )
+    suggestion = result["suggestions"][("order_status", "xyzabc123")]
+    assert suggestion is None
+
+
+def test_suggestion_never_replaces_the_actual_value_in_problems():
+    """
+    Rule 9 check: even with a suggestion available, 'problems' must
+    still report the ORIGINAL wrong value, never the suggested fix --
+    suggesting is not the same as correcting.
+    """
+    real_values = load_real_values()
+    result = check_categoricals(
+        "SELECT * FROM olist_orders_dataset WHERE order_status = 'cancelled'",
+        real_values,
+    )
+    assert ("order_status", "cancelled") in result["problems"]
+    assert ("order_status", "canceled") not in result["problems"]
