@@ -352,3 +352,26 @@ Newest entries at the top. A few lines each.
 
 Nothing else in this document should be treated as flexible without a good
 reason — it reflects deliberate choices, not defaults left unquestioned.
+
+
+## 9b. Deliberate amendment — Phase 5.5, dated 2026-08-01
+
+Section 9 originally said: no vector database without a specific reason
+tied to something actually broken at current scale. This amendment
+documents that reason, so this isn't a silent scope-creep decision.
+
+**Reason:** Ankit sir's brief for this internship explicitly wants
+RAG, vector databases, embeddings, and conversational memory covered
+as learning outcomes — these were previously absent from this project's
+design on purpose (YAGNI, since 15 examples fit in one prompt). That's
+still true at this exact scale. The honest fix isn't to fake a reason
+the data doesn't have — it's to add these techniques where they
+genuinely belong (example retrieval, schema-card retrieval, fuzzy
+categorical suggestions, multi-turn memory) and learn them correctly
+now, at small scale, where results can be checked by hand.
+
+**What's added:** Chroma (local, file-based, no server/Docker — still
+respects the "no Postgres/Docker" rule), Ollama-generated local
+embeddings (no new API key), Python's built-in difflib for fuzzy
+matching (zero new dependency), and a plain Python list for
+conversation memory (no LangGraph, no external chat-history service).

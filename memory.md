@@ -5,6 +5,46 @@ Newest entries at the top. A few lines each.
 ---
 
 ## 2026-08-01 — Claude (chat)
+**Phase:** 5 — LLM connected via LangChain, provider factory built
+**Result:** Built and tested the real LLM layer for the first time in
+this project's life.
+- `src/llm_client.py`: `get_llm(provider)` factory returning ChatGroq /
+  ChatGoogleGenerativeAI / ChatOllama behind one identical interface.
+  Unknown provider name → warns and falls back to `DEFAULT_PROVIDER =
+  "groq"` rather than crashing (deliberate choice: never crash on a typo).
+- `src/prompt_builder.py`: loads schema_cards.yaml, glossary.yaml,
+  examples.jsonl and assembles them + the question into one prompt
+  string via `build_prompt()`. Hands the LLM everything every time, no
+  retrieval/ranking — matches PROJECT.md Section 9's YAGNI call.
+- `.env` (gitignored) holds GROQ_API_KEY and GOOGLE_API_KEY via
+  python-dotenv.
+- Real end-to-end test on Groq: correct SQL for a simple question AND
+  a harder question with no matching example (correctly pulled
+  customer_unique_id from glossary.yaml, not customer_id, proving the
+  semantic layer is actually being read, not just pattern-matched).
+- Ollama (qwen2.5:7b, local, RTX 4050) also tested, responded correctly.
+**Worth remembering:**
+- Gemini free tier now requires a linked Google Cloud billing account
+  (still free under quota) — a `429 RESOURCE_EXHAUSTED ... limit: 0`
+  error is THIS, not real quota exhaustion. Decision: parked Gemini,
+  not fixed — Groq + Ollama already proves the factory pattern works.
+  Circle back later if a 3rd provider is genuinely needed.
+- New standing instruction from Yuraj: don't just avoid hand-writing
+  SQL — also skip the teach-it-step-by-step ritual for Python
+  plumbing/glue code (factories, file loaders, prompt assembly). Write
+  that directly with comments; reserve the slow teaching ritual for
+  genuinely new concepts.
+- Ollama PATH issue (bare `ollama` not recognized right after install)
+  fixed just by closing and reopening PowerShell — same root cause
+  shape as the earlier Python PATH bug, same fix, no registry surgery
+  needed this time.
+**Next up:** Phase 6 — `src/sql_agent.py`, wiring build_prompt() →
+get_llm().invoke() → validate_sql() → check_categoricals() →
+run_query() with a real repair loop (regenerate_fn now actually calls
+the LLM with the error fed back in). Then tests/test_sql_agent.py runs
+the Phase 4 gold set through the REAL pipeline for the first time.
+
+## 2026-08-01 — Claude (chat)
 **Phase:** 4 — Gold Test Set
 **Result:** eval/gold_set.jsonl built — 18 hand-written cases: 8 normal,
 2 bad_categorical, 2 should_block, 1 bad_table_name, 1 bad_column_name,

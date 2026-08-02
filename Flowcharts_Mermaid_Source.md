@@ -1,47 +1,87 @@
 # Flowcharts — Mermaid Source
 
-Same 9 flowcharts as in the Word doc, in raw Mermaid syntax, for pasting into
+Same flowcharts as in the Word doc, in raw Mermaid syntax, for pasting into
 Obsidian (or any Mermaid-compatible tool). Word can't render Mermaid natively,
 so the `.docx` uses rendered images of these same diagrams — this file is the
 editable source.
 
+**Color language.** Every edge is a named, animated link (`@{ animation: slow }`)
+so the diagrams read like a moving current, not a static wiring chart. Edge
+color always means the same thing across every diagram:
 
-## 1. High-Level Pipeline
+| Edge color | Meaning |
+|---|---|
+| 🟢 Green `#00C853` | normal forward flow — this step succeeded, moving on |
+| 🔴 Red `#D50000` | error / retry / refuse / give-up — something failed |
+| 🟠 Amber `#FFAB00` | caution — flagged, low-confidence, needs clarification (not a hard failure) |
+| 🟣 Lavender `#7B5EA7` | conversation memory — read, write, or append to the recent-turns buffer |
+| 🔵 Blue `#2E86C1` | vector / retrieval — embeddings, similarity search, the reviews tool |
+| 🟧 Orange `#C2703D` | orchestrator / routing decision — which tool handles this question |
+| 🔵🟣🟦 (bright variants) | reserved for the Provider Factory / Roadmap diagrams, to tell parallel branches or phase groups apart at a glance |
+
+Box colors, unchanged:
+
+| Box class | Fill / Border |
+|---|---|
+| Normal | `#FFFFFF` / `#3F4A5A` |
+| Good | `#DFF6DD` / `#4F8A57` |
+| Check | `#FFF4CC` / `#B88A00` |
+| Bad | `#FDE2E1` / `#C84C4C` |
+| Memory | `#EDE3F8` / `#7B5EA7` |
+| Vector | `#D6EAF8` / `#2E86C1` |
+| Route | `#FFE0CC` / `#C2703D` |
+
+---
+
+## 1. High-Level Pipeline (agent architecture — memory + routing to SQL or Reviews tool)
 
 ```mermaid
 flowchart TD
-    Q["User Question<br/>(plain English)"]:::good
-    R["Understand the Question<br/>Pull matching schema cards, glossary terms,<br/>and similar examples"]
-    G["Generate SQL<br/>LangChain + LLM<br/>(provider picked at runtime)"]
-    S["Safety Checks<br/>Structure valid? Real values?"]:::check
-    E["Run Query<br/>Read-only database"]
+    Q["User Question"]:::good
+    Mem[("Recent conversation<br/>(memory.py)")]:::memory
+    Route{"Orchestrator:<br/>classify question"}:::route
+    SQL["SQL Tool<br/>(existing pipeline)"]
+    Rev["Reviews Tool<br/>(vector search + summarize)"]:::vector
+    Merge["Merge if both"]
     A["Plain-English Answer"]:::good
 
-    Q L_Q_R_0@--> R
-    R L_R_G_0@--> G
-    G L_G_S_0@--> S
-    S L_S_E_0@--> E
-    E L_E_A_0@--> A
-    E L_E_G_0@-. error → retry (max 2) .-> G
+    Q L_Q_Mem_0@--> Mem
+    Mem L_Mem_Route_0@--> Route
+    Route L_Route_SQL_0@-->|sql| SQL
+    Route L_Route_Rev_0@-->|reviews| Rev
+    Route L_Route_SQL_1@-->|both| SQL
+    Route L_Route_Rev_1@-->|both| Rev
+    SQL L_SQL_Merge_0@--> Merge
+    Rev L_Rev_Merge_0@--> Merge
+    Merge L_Merge_A_0@--> A
+    A L_A_Mem_0@-.->|append turn| Mem
 
-    classDef default fill:#FFFFFF,stroke:#3F4A5A,color:#1F2937
     classDef good fill:#DFF6DD,stroke:#4F8A57,color:#1F2937
-    classDef check fill:#FFF4CC,stroke:#B88A00,color:#1F2937
-    classDef bad fill:#FDE2E1,stroke:#C84C4C,color:#1F2937
+    classDef memory fill:#EDE3F8,stroke:#7B5EA7,color:#1F2937
+    classDef vector fill:#D6EAF8,stroke:#2E86C1,color:#1F2937
+    classDef route fill:#FFE0CC,stroke:#C2703D,color:#1F2937
 
-    linkStyle 0 stroke:#00C853,fill:none
-    linkStyle 1 stroke:#00C853,fill:none
+    linkStyle 0 stroke:#7B5EA7,fill:none
+    linkStyle 1 stroke:#7B5EA7,fill:none
     linkStyle 2 stroke:#00C853,fill:none
-    linkStyle 3 stroke:#00C853,fill:none
+    linkStyle 3 stroke:#2E86C1,fill:none
     linkStyle 4 stroke:#00C853,fill:none
-    linkStyle 5 stroke:#D50000,fill:none
+    linkStyle 5 stroke:#2E86C1,fill:none
+    linkStyle 6 stroke:#00C853,fill:none
+    linkStyle 7 stroke:#2E86C1,fill:none
+    linkStyle 8 stroke:#00C853,fill:none
+    linkStyle 9 stroke:#7B5EA7,fill:none
 
-    L_Q_R_0@{ animation: slow }
-    L_R_G_0@{ animation: slow }
-    L_G_S_0@{ animation: slow }
-    L_S_E_0@{ animation: slow }
-    L_E_A_0@{ animation: slow }
-    L_E_G_0@{ animation: slow }
+    L_Q_Mem_0@{ animation: slow }
+    L_Mem_Route_0@{ animation: slow }
+    L_Route_SQL_0@{ animation: slow }
+    L_Route_Rev_0@{ animation: slow }
+    L_Route_SQL_1@{ animation: slow }
+    L_Route_Rev_1@{ animation: slow }
+    L_SQL_Merge_0@{ animation: slow }
+    L_Rev_Merge_0@{ animation: slow }
+    L_Merge_A_0@{ animation: slow }
+    L_A_Mem_0@{ animation: slow }
 ```
 
 ---
@@ -141,6 +181,176 @@ flowchart TD
     L_Groq_Out_0@{ animation: slow }
     L_Gem_Out_0@{ animation: slow }
     L_Oll_Out_0@{ animation: slow }
+```
+
+## 3c. Block — Reviews Tool (RAG over real review text)
+
+```mermaid
+flowchart TD
+    Src["olist_order_reviews_dataset<br/>review_comment_message<br/>(~41% filled, Portuguese)"]
+    Clean["Drop nulls, basic text cleanup"]
+    Emb["Embed each review<br/>(Ollama, multilingual-capable model)"]:::vector
+    DB[("Chroma: 'reviews'<br/>collection")]:::vector
+    Q["Question"]:::good
+    Search["Similarity search"]:::vector
+    Snip["Top-k relevant<br/>review snippets"]
+    LLM["LLM summarizes snippets<br/>into plain-English answer"]
+    Out["Answer"]:::good
+
+    Src L_Src_Clean_0@--> Clean
+    Clean L_Clean_Emb_0@--> Emb
+    Emb L_Emb_DB_0@--> DB
+    Q L_Q_Search_0@--> Search
+    DB L_DB_Search_0@--> Search
+    Search L_Search_Snip_0@--> Snip
+    Snip L_Snip_LLM_0@--> LLM
+    LLM L_LLM_Out_0@--> Out
+
+    classDef good fill:#DFF6DD,stroke:#4F8A57,color:#1F2937
+    classDef vector fill:#D6EAF8,stroke:#2E86C1,color:#1F2937
+
+    linkStyle 0 stroke:#2E86C1,fill:none
+    linkStyle 1 stroke:#2E86C1,fill:none
+    linkStyle 2 stroke:#2E86C1,fill:none
+    linkStyle 3 stroke:#00C853,fill:none
+    linkStyle 4 stroke:#2E86C1,fill:none
+    linkStyle 5 stroke:#00C853,fill:none
+    linkStyle 6 stroke:#00C853,fill:none
+    linkStyle 7 stroke:#00C853,fill:none
+
+    L_Src_Clean_0@{ animation: slow }
+    L_Clean_Emb_0@{ animation: slow }
+    L_Emb_DB_0@{ animation: slow }
+    L_Q_Search_0@{ animation: slow }
+    L_DB_Search_0@{ animation: slow }
+    L_Search_Snip_0@{ animation: slow }
+    L_Snip_LLM_0@{ animation: slow }
+    L_LLM_Out_0@{ animation: slow }
+```
+
+## 3d. Block — Retrieval Infrastructure (shared, both collections)
+
+```mermaid
+flowchart TD
+    E1["examples.jsonl"]
+    E2["schema_cards.yaml"]
+    R1["review_comment_message<br/>(cleaned)"]
+    Emb["Ollama embeddings"]:::vector
+    C1[("Chroma: 'context'<br/>collection")]:::vector
+    C2[("Chroma: 'reviews'<br/>collection")]:::vector
+
+    E1 L_E1_Emb_0@--> Emb
+    E2 L_E2_Emb_0@--> Emb
+    R1 L_R1_Emb_0@--> Emb
+    Emb L_Emb_C1_0@--> C1
+    Emb L_Emb_C2_0@--> C2
+
+    classDef vector fill:#D6EAF8,stroke:#2E86C1,color:#1F2937
+
+    linkStyle 0 stroke:#2E86C1,fill:none
+    linkStyle 1 stroke:#2E86C1,fill:none
+    linkStyle 2 stroke:#2E86C1,fill:none
+    linkStyle 3 stroke:#2E86C1,fill:none
+    linkStyle 4 stroke:#2E86C1,fill:none
+
+    L_E1_Emb_0@{ animation: slow }
+    L_E2_Emb_0@{ animation: slow }
+    L_R1_Emb_0@{ animation: slow }
+    L_Emb_C1_0@{ animation: slow }
+    L_Emb_C2_0@{ animation: slow }
+```
+
+## 3e. Block — Conversation Memory
+
+```mermaid
+flowchart TD
+    Q["New question"]:::good
+    Buf[("Buffer: last N turns<br/>(question, tool, answer)")]:::memory
+    Add["Formatted into prompt<br/>as RECENT CONVERSATION"]:::memory
+    Ans["New answer produced"]:::good
+    Append["Append turn,<br/>drop oldest if over N"]:::memory
+
+    Q L_Q_Buf_0@--> Buf
+    Buf L_Buf_Add_0@--> Add
+    Add L_Add_Ans_0@-.-> Ans
+    Ans L_Ans_Append_0@--> Append
+    Append L_Append_Buf_0@-. next turn .-> Buf
+
+    classDef good fill:#DFF6DD,stroke:#4F8A57,color:#1F2937
+    classDef memory fill:#EDE3F8,stroke:#7B5EA7,color:#1F2937
+
+    linkStyle 0 stroke:#7B5EA7,fill:none
+    linkStyle 1 stroke:#7B5EA7,fill:none
+    linkStyle 2 stroke:#7B5EA7,fill:none
+    linkStyle 3 stroke:#7B5EA7,fill:none
+    linkStyle 4 stroke:#7B5EA7,fill:none
+
+    L_Q_Buf_0@{ animation: slow }
+    L_Buf_Add_0@{ animation: slow }
+    L_Add_Ans_0@{ animation: slow }
+    L_Ans_Append_0@{ animation: slow }
+    L_Append_Buf_0@{ animation: slow }
+```
+
+## 3f. Block — Orchestrator (orchestrator.py)
+
+The dispatcher, not an agent. It makes exactly **one** LLM classification
+call, then hands off to whichever fixed pipeline(s) it picked — each of
+which already has its own validator / categorical check / execute (SQL
+Tool) or embed / search / summarize (Reviews Tool) guardrails. The
+orchestrator itself never touches the database, never re-decides mid-flight,
+and never loops — that's what keeps it a dispatcher and not an autonomous
+agent (Rule 3 in PROJECT.md).
+
+```mermaid
+flowchart TD
+    Q["Question + recent<br/>conversation context"]:::good
+    Mem[("memory.py buffer")]:::memory
+    LLM{"ONE classification call:<br/>sql / reviews / both?"}:::route
+    SQL["SQL Tool<br/>(validator → categorical_check → execute)"]
+    Rev["Reviews Tool<br/>(embed → search → summarize)"]:::vector
+    Merge["Merge results if both"]
+    Out["Return to answer_synth.py<br/>+ append turn to memory"]:::good
+    Note["Rule 3: exactly one call in,<br/>fixed pipeline out —<br/>never a free-roaming agent"]:::check
+
+    Q L_Q_LLM_0@--> LLM
+    Mem L_Mem_LLM_0@--> LLM
+    LLM L_LLM_SQL_0@-->|sql| SQL
+    LLM L_LLM_Rev_0@-->|reviews| Rev
+    LLM L_LLM_SQL_1@-->|both| SQL
+    LLM L_LLM_Rev_1@-->|both| Rev
+    SQL L_SQL_Merge_0@--> Merge
+    Rev L_Rev_Merge_0@--> Merge
+    Merge L_Merge_Out_0@--> Out
+    LLM L_LLM_Note_0@-.-> Note
+
+    classDef good fill:#DFF6DD,stroke:#4F8A57,color:#1F2937
+    classDef memory fill:#EDE3F8,stroke:#7B5EA7,color:#1F2937
+    classDef vector fill:#D6EAF8,stroke:#2E86C1,color:#1F2937
+    classDef route fill:#FFE0CC,stroke:#C2703D,color:#1F2937
+    classDef check fill:#FFF4CC,stroke:#B88A00,color:#1F2937
+
+    linkStyle 0 stroke:#00C853,fill:none
+    linkStyle 1 stroke:#7B5EA7,fill:none
+    linkStyle 2 stroke:#00C853,fill:none
+    linkStyle 3 stroke:#2E86C1,fill:none
+    linkStyle 4 stroke:#00C853,fill:none
+    linkStyle 5 stroke:#2E86C1,fill:none
+    linkStyle 6 stroke:#00C853,fill:none
+    linkStyle 7 stroke:#2E86C1,fill:none
+    linkStyle 8 stroke:#00C853,fill:none
+    linkStyle 9 stroke:#FFAB00,fill:none
+
+    L_Q_LLM_0@{ animation: slow }
+    L_Mem_LLM_0@{ animation: slow }
+    L_LLM_SQL_0@{ animation: slow }
+    L_LLM_Rev_0@{ animation: slow }
+    L_LLM_SQL_1@{ animation: slow }
+    L_LLM_Rev_1@{ animation: slow }
+    L_SQL_Merge_0@{ animation: slow }
+    L_Rev_Merge_0@{ animation: slow }
+    L_Merge_Out_0@{ animation: slow }
+    L_LLM_Note_0@{ animation: slow }
 ```
 
 ## 4. Block — Validator (validator.py)
@@ -392,53 +602,55 @@ flowchart TD
 
 ## 9. Complete Build Roadmap — All Phases
 
-Color grouped by what each phase is really about — data, safety/testing, LLM,
-then finishing — so the roadmap tells its own story at a glance, not just a
-plain progress bar.
+Color grouped by what each phase is really about — data, safety/testing, LLM
+connect, retrieval + memory, routing/reviews, then finishing — so the
+roadmap tells its own story at a glance, not just a plain progress bar.
 
 ```mermaid
+---
+config:
+  layout: fixed
+---
 flowchart LR
-    P0["Phase 0<br/>Real Data & Database"]
-    P1["Phase 1<br/>Semantic Layer"]
-    P2["Phase 2<br/>Safety Layer"]
-    P3["Phase 3<br/>Value Check"]
-    P4["Phase 4<br/>Gold Test Set"]
-    P5["Phase 5<br/>Connect Real LLM"]
-    P6["Phase 6<br/>Full Agent"]
-    P7["Phase 7<br/>Answer Synthesis"]
-    P8["Phase 8<br/>Interface"]
-    P9["Phase 9<br/>Handoff"]:::good
+    P0["Phase 0 <br>Real Data and Database"] L_P0_P1_0@--> P1["Phase 1 <br>Semantic Layer"]
+    P1 L_P1_P2_0@--> P2["Phase 2<br>Safety layer"]
+    P2 L_P2_P3_0@--> P3["Phase 3<br>Value check"]
+    P3 L_P3_P4_0@--> P4["Phase 4<br>Gold Test Set"]
+    P4 L_P4_P5_0@--> P5["Phase 5<br>Connect Real LLM"]
+    P5 L_P5_P55a_0@--> P55a["Phase<br> 5.5a<br>Retrieval + Memory"]
+    P55a L_P55a_P55b_0@--> P55b["Phase<br> 5.5b<br>Reviews Tool + Orchestrator"]
+    P55b L_P55b_P6_0@--> P6["Phase 6<br>Full Agent"]
+    P6 L_P6_P7_0@--> P7["Phase 7<br>Answer Synthesis"]
+    P7 L_P7_P8_0@--> P8["Phase 8<br>Interface"]
+    P8 L_P8_P9_0@--> P9["Phase 9<br>Polishing And Completion"]
 
-    P0 L_P0_P1_0@--> P1
-    P1 L_P1_P2_0@--> P2
-    P2 L_P2_P3_0@--> P3
-    P3 L_P3_P4_0@--> P4
-    P4 L_P4_P5_0@--> P5
-    P5 L_P5_P6_0@--> P6
-    P6 L_P6_P7_0@--> P7
-    P7 L_P7_P8_0@--> P8
-    P8 L_P8_P9_0@--> P9
-
-    classDef default fill:#FFFFFF,stroke:#3F4A5A,color:#1F2937
+     P55a:::memory
+     P55b:::route
+     P9:::good
     classDef good fill:#DFF6DD,stroke:#4F8A57,color:#1F2937
-
+    classDef memory fill:#EDE3F8,stroke:#7B5EA7,color:#1F2937
+    classDef route fill:#FFE0CC,stroke:#C2703D,color:#1F2937
     linkStyle 0 stroke:#2979FF,fill:none
     linkStyle 1 stroke:#2979FF,fill:none
     linkStyle 2 stroke:#FFAB00,fill:none
     linkStyle 3 stroke:#FFAB00,fill:none
     linkStyle 4 stroke:#AA00FF,fill:none
-    linkStyle 5 stroke:#AA00FF,fill:none
-    linkStyle 6 stroke:#00C853,fill:none
+    linkStyle 5 stroke:#7B5EA7,fill:none
+    linkStyle 6 stroke:#C2703D,fill:none
     linkStyle 7 stroke:#00C853,fill:none
     linkStyle 8 stroke:#00C853,fill:none
+    linkStyle 9 stroke:#00C853,fill:none
+    linkStyle 10 stroke:#00C853,fill:none
 
-    L_P0_P1_0@{ animation: slow }
-    L_P1_P2_0@{ animation: slow }
-    L_P2_P3_0@{ animation: slow }
-    L_P3_P4_0@{ animation: slow }
-    L_P4_P5_0@{ animation: slow }
-    L_P5_P6_0@{ animation: slow }
-    L_P6_P7_0@{ animation: slow }
-    L_P7_P8_0@{ animation: slow }
+    L_P0_P1_0@{ animation: slow } 
+    L_P1_P2_0@{ animation: slow } 
+    L_P2_P3_0@{ animation: slow } 
+    L_P3_P4_0@{ animation: slow } 
+    L_P4_P5_0@{ animation: slow } 
+    L_P5_P55a_0@{ animation: slow } 
+    L_P55a_P55b_0@{ animation: slow } 
+    L_P55b_P6_0@{ animation: slow } 
+    L_P6_P7_0@{ animation: slow } 
+    L_P7_P8_0@{ animation: slow } 
     L_P8_P9_0@{ animation: slow }
 ```
