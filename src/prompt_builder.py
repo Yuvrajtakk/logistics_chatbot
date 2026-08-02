@@ -1,68 +1,27 @@
-# yaml reads .yaml files into Python dicts — same library check_yaml.py
-# already uses, nothing new here.
-import yaml
+"""
+prompt_builder.py
+------------------
+Assembles the full prompt handed to the LLM for SQL generation.
 
-# json reads .jsonl files one line at a time (each line is its own
-# independent JSON object) — same pattern as check_jsonl.py.
-import json
+Phase 5.5a change: instead of dumping the ENTIRE schema and ALL 15
+examples into every prompt, this now calls retrieval.py's
+search_context() to pull only the top-k most RELEVANT schema tables
+and examples for the specific question being asked. Glossary stays
+included in full -- only 5 terms, small enough that retrieving a
+subset would add complexity for no real savings (YAGNI).
 
-# os.path lets this file find semantic/ correctly regardless of which
-# folder you're standing in when you run it — same trick used in
-# execute.py for finding olist.db.
-import os
+Also new: an optional recent-conversation section, fed by memory.py's
+ConversationMemory, so follow-up questions can be understood.
+"""
 
-# Build a path to the semantic/ folder that works no matter where this
-# script is run from: go up one level from src/, then into semantic/.
-SEMANTIC_DIR = os.path.join(os.path.dirname(__file__), "..", "semantic")
-
-
-def load_schema_cards():
-    """Loads schema_cards.yaml into a Python dict: {table_name: {...}}"""
-    path = os.path.join(SEMANTIC_DIR, "schema_cards.yaml")
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def load_glossary():
-    """Loads glossary.yaml into a Python dict: {term_name: {...}}"""
-    path = os.path.join(SEMANTIC_DIR, "glossary.yaml")
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-
-def load_examples():
-    """
-    Loads examples.jsonl into a list of dicts:
-    [{"question": ..., "sql": ...}, {"question": ..., "sql": ...}, ...]
-    One json.loads() call per line, same as check_jsonl.py already does.
-    """
-    path = os.path.join(SEMANTIC_DIR, "examples.jsonl")
-    examples = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            examples.append(json.loads(line))
-    return examples
-
-def format_schema_cards(schema_cards: dict) -> str:
-    """
-    Turns the schema_cards dict into plain text describing every table
-    and column — this is the "seating chart" from the lunch-box analogy.
-    """
-    lines = []
-    for table_name, table_info in schema_cards.items():
-        lines.append(f"TABLE: {table_name}")
-        lines.append(f"  {table_info['description'].strip()}")
-        for col_name, col_info in table_info["columns"].items():
-            lines.append(f"  - {col_name} ({col_info['type']}): {col_info['description'].strip()}")
-        lines.append("")  # blank line between tables, easier to read
-    return "\n".join(lines)
+from src.semantic_loader import load_glossary
 
 
 def format_glossary(glossary: dict) -> str:
     """
-    Turns the glossary dict into plain text business-term definitions —
-    the "classroom rules" piece. sql_logic is included so the LLM sees
-    the EXACT expression to use, not just the plain-English idea.
+    Turns the glossary dict into plain text business-term definitions.
+    sql_logic is included so the LLM sees the EXACT expression to use,
+    not just the plain-English idea.
     """
     lines = []
     for term_name, term_info in glossary.items():
@@ -73,33 +32,39 @@ def format_glossary(glossary: dict) -> str:
     return "\n".join(lines)
 
 
-def format_examples(examples: list) -> str:
+def build_prompt(question: str, memory=None) -> str:
     """
-    Turns the examples list into plain text Q -> SQL pairs — the
-    "worked problems on the board" piece. Refusal examples (sql starts
-    with "REFUSE:") are included as-is, teaching the LLM by example
-    that refusing is sometimes the CORRECT answer, not a failure.
-    """
-    lines = []
-    for ex in examples:
-        lines.append(f"Q: {ex['question']}")
-        lines.append(f"SQL: {ex['sql']}")
-        lines.append("")
-    return "\n".join(lines)
-
-def build_prompt(question: str) -> str:
-    """
-    The single entry point this whole file exists for. Takes the
-    user's plain-English question, returns one complete prompt string
+    The single entry point this file exists for. Takes the user's
+    plain-English question and returns one complete prompt string,
     ready to hand straight to an LLM via get_llm().invoke(prompt).
-    """
-    schema_cards = load_schema_cards()
-    glossary = load_glossary()
-    examples = load_examples()
 
-    # A short, direct instruction block up front — LLMs follow
-    # explicit rules stated plainly far more reliably than rules left
-    # implied by the examples alone.
+    question: the plain-English question.
+    memory: an optional ConversationMemory instance (memory.py). If
+        given and it already has turns in it, those recent turns are
+        included so the LLM can understand follow-up questions like
+        "what about payment type?" If None, or empty, this section is
+        skipped entirely -- no pointless empty header in the prompt.
+    """
+    # Imported here rather than at the top of the file. retrieval.py
+    # no longer imports anything from THIS file (it reads from
+    # semantic_loader.py instead), so this import is safe at the top
+    # too now -- but keeping it local here is a deliberate, harmless
+    # habit while this refactor is fresh, to make the dependency
+    # direction obvious at a glance without scrolling to the top.
+    from src.retrieval import search_context
+
+    # Pull the k=5 most relevant cards for THIS question -- a mix of
+    # schema tables and examples, whichever are closest by meaning.
+    results = search_context(question, k=5)
+
+    # Split the mixed results back into two groups by their metadata
+    # "source" tag, which build_context_collection() set when it
+    # built the collection.
+    schema_snippets = [r.page_content for r in results if r.metadata.get("source") == "schema"]
+    example_snippets = [r.page_content for r in results if r.metadata.get("source") == "example"]
+
+    glossary = load_glossary()
+
     instructions = (
         "You are a SQL generator for a read-only SQLite database about "
         "Brazilian e-commerce orders (the Olist dataset). Given a plain-"
@@ -109,16 +74,31 @@ def build_prompt(question: str) -> str:
         "with this data, respond with exactly: REFUSE: <one clear reason>"
     )
 
-    # f-string assembly: every piece gets its own labeled section, in
-    # the same order every time, so the LLM always sees the same shape
-    # of prompt regardless of which question comes in.
-    prompt = (
-        f"{instructions}\n\n"
-        f"=== SCHEMA ===\n{format_schema_cards(schema_cards)}\n"
-        f"=== GLOSSARY ===\n{format_glossary(glossary)}\n"
-        f"=== EXAMPLES ===\n{format_examples(examples)}\n"
-        f"=== QUESTION ===\n{question}\n"
-        f"SQL:"
-    )
+    # Building the prompt as a list of lines/blocks, joined at the end,
+    # instead of one long f-string -- makes it easy to conditionally
+    # skip the recent-conversation section without messy string logic.
+    parts = [instructions, ""]
 
-    return prompt
+    parts.append("=== RELEVANT SCHEMA (top matches for this question) ===")
+    parts.append("\n\n".join(schema_snippets) if schema_snippets else "(no closely matching table found)")
+    parts.append("")
+
+    parts.append("=== GLOSSARY ===")
+    parts.append(format_glossary(glossary))
+
+    parts.append("=== SIMILAR EXAMPLES ===")
+    parts.append("\n\n".join(example_snippets) if example_snippets else "(no closely matching example found)")
+    parts.append("")
+
+    # Only add a recent-conversation section if there's actually
+    # history to show -- format_for_prompt() returns "" if empty.
+    recent_conversation = memory.format_for_prompt() if memory else ""
+    if recent_conversation:
+        parts.append("=== RECENT CONVERSATION ===")
+        parts.append(recent_conversation)
+
+    parts.append("=== QUESTION ===")
+    parts.append(question)
+    parts.append("SQL:")
+
+    return "\n".join(parts)

@@ -30,7 +30,7 @@ from langchain_ollama import OllamaEmbeddings
 # prompt_builder.py -- no need to re-read the YAML/JSONL files a
 # second way. This file only reshapes their output into individual
 # Chroma "cards" instead of one giant formatted string.
-from src.prompt_builder import load_schema_cards, load_examples
+from src.semantic_loader import load_schema_cards, load_examples
 
 # Where the Chroma database file lives on disk. Same "step out of src/,
 # into a sibling folder" pattern already used for SEMANTIC_DIR in
