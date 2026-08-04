@@ -3,6 +3,207 @@
 Newest entries at the top. A few lines each.
 
 ---
+## 2026-08-04 — Claude (chat)
+**Phase:** 5.5b — complete and fully tested
+**Result:** Built, tested, and committed the reviews collection + orchestrator.
+- `build_reviews_collection()` batched run completed cleanly: 40,977 real
+  review comments embedded in batches of 200, no batch failures. VRAM was
+  clear before starting (`ollama ps` confirmed).
+- `src/retrieval.py` additions confirmed working: `get_review_embeddings()`
+  (qwen3-embedding:0.6b), `load_review_texts()`, `build_reviews_collection()`,
+  `search_reviews()`. Added `_MAX_SEARCH_K = 16_383` module constant (see bugs).
+- `src/orchestrator.py` (NEW): `classify_question()` — one LLM call, returns
+  "sql"/"reviews"/"both". `run_sql_pipeline()` — full SQL path with REFUSE
+  detection. `run_reviews_pipeline()` — thin wrapper on `search_reviews()`.
+  `orchestrate()` — public entry point, always returns a dict, never raises.
+- `src/validator.py` patched: wrapped `sqlglot.parse_one()` in try/except
+  so `ParseError` is always re-raised as `ValidationError` (see bugs).
+- `scratch_embedding_test.py` deleted (was the last of 3 throwaway files).
+- 69/69 tests passing after all fixes. Zero regressions.
+
+**Real bugs found by tests this session (all fixed):**
+1. `k > SQLITE_MAX_VARIABLE_NUMBER` crashes Chroma: `_collection.count()` is
+   NOT a safe cap — the collection itself (~40,668) exceeds SQLite's ~32,766
+   variable limit. Fix: `_MAX_SEARCH_K = 16_383` hard constant, half of
+   SQLite's limit, well above any real search use case.
+2. `validate_sql()` leaked `sqlglot.errors.ParseError` instead of the
+   consistent `ValidationError` that all callers catch. Any non-SQL string
+   (including REFUSE responses) silently bypassed all error handling. Fix:
+   wrapped `parse_one()` in try/except, re-raise as `ValidationError`.
+3. REFUSE responses from LLM were passed straight to `validate_sql()`: the
+   prompt tells the LLM to return `REFUSE: <reason>` for unanswerable
+   questions — it was doing exactly that, but the code then tried to parse
+   it as SQL. Fix: check `raw_sql.upper().startswith("REFUSE:")` in
+   `run_sql_pipeline()` before calling the validator.
+4. Test assumption wrong — duplicate `page_content` in review results is real
+   data: hundreds of customers independently wrote identical short texts like
+   "Atraso na entrega". Distinctness contract is `review_id`, not text.
+
+**Worth remembering:**
+- `Chroma.from_texts()` → risky for large corpora (one huge request). Use
+  `.add_texts()` in loops on an already-created `Chroma(...)` instance.
+- Even `k == collection_size` crashes Chroma/SQLite for large collections.
+  Always cap with a hard constant below 32,766.
+- `validate_sql()` now has a consistent exception interface: always raises
+  `ValidationError`, never leaks sqlglot internals.
+- `orchestrate()` has three catch layers: `ValidationError`, `ExecutionError`,
+  and a broad `except Exception` final safety net that logs + returns a dict
+  instead of crashing the caller.
+
+**Next up (Phase 6):**
+Per PROJECT.md order. Phase 5.5b is fully committed.
+
+## 2026-08-02 — Claude (chat)
+**Phase:** 5.5a — complete (final piece: fuzzy suggestions)
+**Result:** Added difflib-based fuzzy suggestions to categorical_check.py.
+- New `suggest_similar_value(bad_value, real_set)`: uses
+  `difflib.get_close_matches(n=1, cutoff=0.6)` to find the single
+  closest real value, or None if nothing is close enough.
+- `check_categoricals()` now returns a new `suggestions` dict key
+  (column, bad_value) -> suggestion, alongside the ORIGINAL unchanged
+  `problems` list -- deliberately additive, not a reshape, so
+  run_eval.py and the existing test file didn't need to change.
+- Confirmed Rule 9 still holds: `problems` always reports the original
+  wrong value, `suggestions` is purely informational, never substituted
+  into the actual query.
+- tests/test_categorical_check.py: 3 new tests (suggestion offered for
+  close typo, no suggestion for unrelated garbage, suggestion never
+  leaks into problems) -- 7/7 total passing.
+- tests/test_categorical_check_adversarial.py: 3 new adversarial tests
+  -- confirmed empty real_set doesn't crash difflib (returns None
+  cleanly, genuinely didn't know this beforehand), empty bad_value
+  doesn't crash, and calling the function with an already-valid value
+  (a contract violation) still behaves sanely.
+**Worth remembering:** This closes Phase 5.5a completely -- retrieval.py,
+memory.py, prompt_builder.py refactor, and this fuzzy-suggestion piece
+are all built, tested, AND adversarially tested now (new standing rule
+from Yuraj this session: every block gets a real penetration/adversarial
+test after normal tests pass, not just happy-path tests -- this rule
+already caught one real bug this session, in memory.py's
+get_recent_turns() leaking internal state).
+**Next up:** Phase 5.5b -- Reviews Tool (RAG over review text) +
+orchestrator.py. First real open question to test empirically, not
+assume: whether nomic-embed-text (English-oriented) handles the
+~41%-filled, Portuguese-language review_comment_message text well
+enough, or whether a multilingual embedding model is genuinely needed.
+
+## 2026-08-02 — Claude (chat)
+**Phase:** 5.5a — Retrieval, Vector DB, Embeddings & Conversation Memory
+**Result:** Built and tested all three pieces of Phase 5.5a.
+- `src/retrieval.py`: "context" Chroma collection (24 cards: 9 schema
+  tables + 15 examples), local nomic-embed-text embeddings via Ollama.
+  `build_context_collection()` builds/rebuilds, `search_context(q, k)`
+  does meaning-based retrieval. Confirmed by hand: a question with zero
+  matching wording ("no category assigned") correctly surfaced the
+  right schema card via meaning, not keywords.
+- `src/memory.py`: `ConversationMemory` class, plain Python list capped
+  at MAX_TURNS=5, oldest dropped first. `format_for_prompt()` turns the
+  buffer into prompt-ready text, empty string if no history yet.
+- `src/semantic_loader.py`: NEW file, pulled out of prompt_builder.py.
+  Reason: prompt_builder.py needed to import search_context() from
+  retrieval.py, but retrieval.py already imported the loader functions
+  FROM prompt_builder.py -- a circular import. Both files now import
+  shared loaders from semantic_loader.py instead; neither imports from
+  the other.
+- `src/prompt_builder.py`: refactored. Schema + examples now pulled via
+  search_context() (top-5 relevant cards) instead of the full 9-table/
+  15-example dump every time. Glossary stays included in full always --
+  deliberate: only 5 terms, cheap to include, and glossary rules (like
+  the unique_customer overcounting fix) can matter even when a question
+  doesn't obviously reference them, so narrowing it risked silently
+  dropping a rule that mattered. Added optional `memory=` parameter for
+  recent-conversation context.
+- New standing instruction from Yuraj: every phase now gets an
+  adversarial/penetration test in addition to normal tests, written
+  AFTER normal tests pass, genuinely trying to break the code -- not
+  a one-off, applies going forward to every block.
+**Worth remembering:**
+- Real bug caught by the first adversarial test ever written on this
+  project: `ConversationMemory.get_recent_turns()` returned the actual
+  internal list object, not a copy -- any caller could mutate it
+  directly and silently blow past MAX_TURNS, completely bypassing
+  add_turn(). Fixed with `.copy()`. Would never have been caught by
+  normal happy-path tests, since they only ever called the API "the
+  right way."
+- Adversarial test also confirmed something the docstring only
+  CLAIMED: `build_context_collection()` really is safe to re-run
+  (Chroma upserts cleanly on matching IDs, no duplicates) -- verified
+  empirically instead of trusted on faith.
+- Real, known, DEFERRED limitation found by adversarial testing:
+  `build_prompt()` does zero sanitization of the user's question --
+  a question containing fake `=== QUESTION ===`/`SQL:` headers lands
+  in the prompt completely unguarded (prompt injection). Deliberately
+  NOT fixed now -- decided not a blocker since validator.py still
+  structurally blocks any real DROP/DELETE regardless of how the LLM
+  was tricked into generating it. Worth fixing properly later (maybe
+  Phase 9 polish), not forgotten, just not urgent.
+- Any file inside src/ that imports another file inside src/ must use
+  `from src.filename import ...`, not a bare `from filename import ...`
+  -- everything in this project runs from repo root, not from inside
+  src/. First hit this with retrieval.py importing prompt_builder.py.
+**Next up:** Phase 5.5a's last piece -- enhance categorical_check.py
+with difflib-based fuzzy suggestions (flagging only, still never
+auto-correcting, per Rule 9). Then Phase 5.5a is fully complete and we
+move to Phase 5.5b: Reviews Tool + orchestrator.py.
+
+## 2026-08-02 — Claude (chat)
+**Phase:** 5.5 — designed, not yet built
+**Result:** Reshaped the RAG/memory/NLP requirement honestly instead of
+bolting it on. Found a real second use case already sitting unused in the
+dataset: `review_comment_message` (real customer complaints, ~41% filled,
+Portuguese) — SQL can't semantically search that, so it justifies a real
+second tool, not an artificial excuse for complexity.
+- **Architecture decided:** SQL Tool (existing pipeline, untouched) +
+  new Reviews Tool (vector search over review text, RAG) + Orchestrator
+  (ONE bounded LLM classification call: sql / reviews / both, then
+  dispatches to fixed pipelines) + conversation memory (plain Python
+  list, last N turns, shared across both tools).
+- **Kept deliberately lean:** exactly 3 new files —`retrieval.py` (two
+  Chroma collections: context + reviews), `memory.py`, `orchestrator.py`.
+  Existing safety-critical files (validator, execute, categorical_check)
+  untouched on purpose — they're independently tested, no reason to
+  restructure what already works.
+- **Tools chosen:** Chroma (local, file-based, no server), Ollama local
+  embeddings (`nomic-embed-text` to start — cross-lingual quality on
+  Portuguese review text is an open question, not assumed), Python's
+  built-in `difflib` for a new fuzzy "did you mean...?" suggestion in
+  `categorical_check.py` (still never auto-corrects — Rule 9 intact).
+- Wrote a full copy-paste text package for updating PROJECT.md (new
+  Section 9b amendment + 9c note on file count, updated Phase 5.5a/5.5b
+  roadmap entries, updated Section 9/11), Flowcharts_Mermaid_Source.md
+  (5 new/updated Mermaid diagrams), and the Word doc tracker (progress
+  table row, new subsections, file structure, guardrails table, phase
+  checklist with real sourced video links) — handed over as plain text
+  for Yuraj to paste in himself, not applied directly to files.
+**Worth remembering:**
+- **Orchestrator ≠ LangGraph, confirmed and reasoned through.** What
+  actually requires LangGraph is state persisting across steps + cycles
+  (a step looking at a previous step's output and deciding what to do
+  next). This Orchestrator does one classification call upfront, then a
+  plain `if/elif` dispatch — a branch, not a graph. Hard Rule 3 ("no
+  LangGraph, no autonomous agents") stays fully intact; if the
+  Orchestrator ever needs to look at one tool's result before deciding
+  whether to call another, THAT would cross into needing LangGraph and
+  would need its own amendment — hasn't happened, shouldn't happen
+  without deliberately deciding so.
+- Attempted a full docx image-regeneration + XML-surgery pass on the
+  Word doc tracker (Graphviz diagrams, unzip/re-zip editing) — burned a
+  lot of turns/tokens for something the interface can't actually verify
+  visually anyway. **Standing correction, going forward: no image
+  rendering, no docx/file surgery unless explicitly asked. Plain
+  copy-pasteable text and Mermaid code only** — Yuraj pastes it into
+  files himself, much cheaper and he's going through it side-by-side
+  anyway.
+- Also surfaced a fair critique: this project's modularity (many small
+  files) is a deliberate choice tied to Phases 2–4 being safety-critical
+  and independently testable, not just "how projects are usually built"
+  — worth being able to explain that reasoning if asked in review.
+**Next up:** Phase 5.5a — install `langchain-chroma` + `chromadb`, pull
+`nomic-embed-text` via Ollama, build `retrieval.py`'s context collection
+(examples + schema) first, block by block. Reviews collection and
+Orchestrator come in 5.5b, after 5.5a is tested and committed. Confirm
+the PROJECT.md/Flowcharts/docx copy-paste updates were actually pasted
+in before assuming those docs are current.
 
 ## 2026-08-01 — Claude (chat)
 **Phase:** 5 — LLM connected via LangChain, provider factory built
