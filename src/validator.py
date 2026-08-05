@@ -18,17 +18,28 @@ MAX_ROWS = 1000
 
 
 class ValidationError(Exception):
+    """Exception raised when SQL validation fails."""
     pass
 
 
 def validate_sql(sql: str) -> str:
+    """
+    Validates a SQL string by parsing its AST using sqlglot.
+    Checks that it's a SELECT statement and only touches allowed tables.
+    Also appends a LIMIT clause to cap result sizes.
+
+    Args:
+        sql (str): The raw SQL query.
+        
+    Returns:
+        str: The validated and limited SQL query.
+        
+    Raises:
+        ValidationError: If the query fails structural or allow-list checks.
+    """
     try:
         tree = sqlglot.parse_one(sql)
     except ParseError as e:
-        # sqlglot couldn't parse the string at all -- it's not valid SQL.
-        # Re-raise as ValidationError so every caller sees a consistent
-        # exception type. This catches REFUSE: responses from the LLM too,
-        # but run_sql_pipeline() checks for REFUSE before calling here.
         raise ValidationError(f"SQL parsing failed: {e}")
 
     if not isinstance(tree, exp.Select):

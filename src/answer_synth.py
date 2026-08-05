@@ -1,11 +1,8 @@
 """
 answer_synth.py
 ---------------
-Phase 7: Synthesizes the result dict from orchestrator() into a plain-English
-answer for the user. Handles all four SQL statuses, the reviews path (via a
-summarization LLM call), and the "both" path.
-
-Never raises an exception to the caller. Always returns a plain string.
+Phase 7: Synthesizes the result dict from orchestrator() into a plain-English answer.
+Handles all four SQL statuses, the reviews path, and the "both" path.
 """
 
 from src.llm_client import get_llm
@@ -27,8 +24,8 @@ Do not write anything else. Just the summary.
 
 def synthesize_answer(question: str, result: dict) -> str:
     """
-    Takes the orchestrator's result dict and the original question,
-    and returns a plain-English answer. Never raises an exception.
+    Takes the orchestrator's result dict and returns a plain-English answer.
+    Never raises an exception to the caller.
     """
     try:
         route = result.get("route")
@@ -90,7 +87,6 @@ def _synthesize_both(question: str, result: dict) -> str:
     if result.get("sql_error") and result.get("reviews_error"):
         return "I encountered a technical issue and couldn't answer this question right now."
 
-    # SQL part
     sql_part = ""
     if result.get("sql_error"):
         sql_part = "I couldn't query the database for this question."
@@ -106,7 +102,6 @@ def _synthesize_both(question: str, result: dict) -> str:
     else:
         sql_part = "I couldn't find the database records for this question."
 
-    # Reviews part
     reviews_part = ""
     if result.get("reviews_error"):
         reviews_part = "I couldn't search customer reviews for this question."
@@ -119,7 +114,6 @@ def _synthesize_both(question: str, result: dict) -> str:
     else:
         reviews_part = "I couldn't search customer reviews for this question."
 
-    # Stitched together separated by double newline
     return f"{sql_part}\n\n{reviews_part}"
 
 

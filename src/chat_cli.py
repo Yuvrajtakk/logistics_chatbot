@@ -1,17 +1,7 @@
-"""
-chat_cli.py
------------
-Phase 8: The terminal interface for the logistics chatbot.
-
-Ties together orchestrator.py, answer_synth.py, and memory.py into an
-interactive loop. Handles setting the LLM provider globally at startup.
-"""
-
 import argparse
 import sys
 import os
 
-# Ensure the script can run from anywhere by adding the project root to sys.path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import src.llm_client
@@ -29,8 +19,7 @@ def main():
     )
     args = parser.parse_args()
 
-    # Override the default provider globally so downstream files (orchestrator,
-    # sql_agent, answer_synth) use the chosen provider when calling get_llm().
+    # Override the default provider globally for all downstream modules
     src.llm_client.DEFAULT_PROVIDER = args.provider
 
     print("=" * 60)
@@ -42,7 +31,6 @@ def main():
 
     while True:
         try:
-            # Prompt the user
             question = input("\nYou: ").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nExiting...")
@@ -57,19 +45,13 @@ def main():
 
         print("\n[Thinking...]")
         
-        # 1. Orchestrate (classify, run pipelines)
         result = orchestrate(question, memory=memory)
-        
-        # 2. Synthesize plain English answer
         answer = synthesize_answer(question, result)
         
-        # 3. Present to user
         print(f"\nBot: {answer}")
         
-        # 4. Record the turn in memory
         route = result.get("route", "unknown")
         memory.add_turn(question=question, tool=route, answer=answer)
-
 
 if __name__ == "__main__":
     main()
