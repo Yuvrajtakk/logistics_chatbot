@@ -4,6 +4,24 @@ Newest entries at the top. A few lines each.
 
 ---
 ## 2026-08-05 — Antigravity
+**Phase:** 7 — complete and fully tested
+**Result:** Built `src/answer_synth.py` to synthesize the orchestrator's result dict into plain English. 
+- Handles all four SQL statuses (ok, refused, flagged, error).
+- Handles the `reviews` route via a dedicated summarization LLM call (prompted strictly to extract exactly one Portuguese quote + English translation). 
+- Handles the `both` route by stitching the two paragraphs together. Total failure across both pipelines produces a clean unified fallback.
+- Added 18 tests (normal + adversarial) proving string formatting, fallback on LLM timeout, gracefully handling malformed input, and the core "never raises" contract. All 18 passing.
+
+**Design decisions deliberately made:**
+- **Categorical flagging size cap:** If a bad value is flagged but no fuzzy suggestion exists, the code checks the valid set's size. If <= 10 (`order_status`, `payment_type`), it lists all valid options. If > 10 (`customer_state`, `product_category_name`, etc.), it just stops at "not recognized" to avoid dumping 70 values into a chat sentence.
+- **No "Ask me to list values" hint:** Deferred adding a hint like "Ask me to list valid values" for large sets. We haven't verified that the pipeline can reliably answer that follow-up question (Rule 7: Never claim something works without having actually run it).
+- **Never raises contract:** The top-level `synthesize_answer()` and the internal `_summarize_documents()` call both have safety-net `try/except` blocks. If the LLM throws a timeout or the dict is completely malformed, it falls back to a plain English error string instead of crashing `chat_cli.py`.
+
+**Worth remembering:**
+- The prompt explicitly enforces the quote formatting constraint at the LLM level. If we notice drifting formats later, it's model non-determinism, not missing instructions. 
+- `_get_real_values` is imported from `sql_agent.py` to access the DB cache. Safe for now, since it only reads.
+
+---
+## 2026-08-05 — Antigravity
 **Phase:** 6 — complete and fully tested
 **Result:** Built `src/sql_agent.py` (the full SQL pipeline, correctly ordered),
 patched `categorical_check.py`'s path bug, slimmed `orchestrator.py` to delegate
