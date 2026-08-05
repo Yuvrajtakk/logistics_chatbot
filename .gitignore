@@ -5,3 +5,6 @@ __pycache__/
 *.pyc
 .env
 data/chroma_db/
+.pytest_cache/
+.vscode/
+*.log

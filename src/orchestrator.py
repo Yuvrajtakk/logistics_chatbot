@@ -26,6 +26,34 @@ No explanation. No punctuation. No extra words.
 Question: {question}
 Category:"""
 
+_REWRITE_PROMPT = """\
+Given the following conversation history and the user's latest follow-up question, rewrite the follow-up question into a standalone, fully-contextualized question. 
+If the user's latest question is already standalone, just return it exactly as is.
+Do not answer the question. Reply ONLY with the rewritten question. No explanation.
+
+Conversation History:
+{history}
+
+Latest Question: {question}
+Rewritten Question:"""
+
+
+def rewrite_question(question: str, memory: ConversationMemory = None) -> str:
+    """
+    Rewrites a follow-up question into a standalone question using the conversation history.
+    """
+    if not memory:
+        return question
+        
+    history = memory.format_for_prompt()
+    if not history:
+        return question
+        
+    llm = get_llm()
+    prompt = _REWRITE_PROMPT.format(history=history, question=question)
+    rewritten = llm.invoke(prompt).content.strip()
+    return rewritten
+
 
 def classify_question(question: str) -> str:
     """
@@ -77,11 +105,14 @@ def orchestrate(question: str, memory: ConversationMemory = None) -> dict:
     Classifies the question and runs the corresponding pipelines.
     Always returns a dictionary describing the result.
     """
-    route = classify_question(question)
+    contextualized_question = rewrite_question(question, memory)
+    print(f"[orchestrator] Original: '{question}' -> Rewritten: '{contextualized_question}'")
+    
+    route = classify_question(contextualized_question)
 
     if route == "sql":
         try:
-            agent_result = run_sql_agent(question, memory=memory)
+            agent_result = run_sql_agent(contextualized_question, memory=memory)
 
             if agent_result["status"] == "ok":
                 return {
@@ -116,7 +147,7 @@ def orchestrate(question: str, memory: ConversationMemory = None) -> dict:
 
     elif route == "reviews":
         try:
-            documents = run_reviews_pipeline(question)
+            documents = run_reviews_pipeline(contextualized_question)
             return {"route": "reviews", "documents": documents}
         except Exception as e:
             return {"route": "reviews", "error": type(e).__name__, "detail": str(e)}
@@ -125,7 +156,7 @@ def orchestrate(question: str, memory: ConversationMemory = None) -> dict:
         result = {"route": "both"}
 
         try:
-            agent_result = run_sql_agent(question, memory=memory)
+            agent_result = run_sql_agent(contextualized_question, memory=memory)
             if agent_result["status"] == "ok":
                 result["sql"] = agent_result["sql"]
                 result["columns"] = agent_result["columns"]
@@ -141,7 +172,7 @@ def orchestrate(question: str, memory: ConversationMemory = None) -> dict:
             result["sql_error"] = str(e)
 
         try:
-            documents = run_reviews_pipeline(question)
+            documents = run_reviews_pipeline(contextualized_question)
             result["documents"] = documents
         except Exception as e:
             result["reviews_error"] = str(e)

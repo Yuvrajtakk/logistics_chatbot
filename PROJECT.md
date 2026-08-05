@@ -375,3 +375,38 @@ respects the "no Postgres/Docker" rule), Ollama-generated local
 embeddings (no new API key), Python's built-in difflib for fuzzy
 matching (zero new dependency), and a plain Python list for
 conversation memory (no LangGraph, no external chat-history service).
+
+### Phase 5.5b — embedding model DECIDED, reviews collection not yet built
+
+Resolved after 4 rounds of empirical testing (full detail in memory.md,
+2026-08-04 entry — read it before continuing): `nomic-embed-text` failed
+consistently on Portuguese "late delivery" queries (returned opposite-
+sentiment matches). Switched to `qwen3-embedding:0.6b` (multilingual,
+639MB, separate Ollama pull, coexists fine with nomic-embed-text).
+Confirmed real improvement across 2 more rounds — strong on late-delivery
+and sentiment, a known-but-acceptable weak spot on damaged/wrong-item
+specificity at small sample sizes (expected to improve at full ~41k-review
+scale — untested assumption, worth checking once the real collection exists).
+
+**Decision made: proceed with `qwen3-embedding:0.6b` for the reviews
+collection.** Do not re-litigate the model choice without new evidence —
+this was a deliberate, tested decision, not a default.
+
+**Immediate next step, in order:**
+1. In `src/retrieval.py`, add a second Chroma collection, `"reviews"`,
+   alongside the existing `"context"` one. Pull ALL non-null
+   `review_comment_message` rows from `olist_order_reviews_dataset`
+   (~41k rows — the real corpus, not a sample). Embed with
+   `qwen3-embedding:0.6b` (note: this needs its own `get_embeddings()`-
+   style function, separate from the one pointed at nomic-embed-text,
+   since "context" and "reviews" now use two different embedding models).
+2. Test it: does `search_reviews(question, k)` return genuinely relevant
+   reviews for a few hand-picked test questions? Then adversarial test,
+   per standing rule.
+3. Build `orchestrator.py`: ONE LLM classification call per question
+   (sql / reviews / both), dispatches to the SQL pipeline and/or the new
+   reviews search — never loops, never re-decides mid-flight, never
+   touches the DB directly (Rule 3 — this is a dispatcher, not an agent).
+4. Delete/gitignore the 3 throwaway scratch_embedding_test*.py files in
+   the repo root once the real collection is proven working.
+5. Commit, push, THEN move to Phase 6.

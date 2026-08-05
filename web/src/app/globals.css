@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --canvas: #07111f;
+    --background: #0c1929;
+    --foreground: #edf7ff;
+    --border: #1f3a50;
+    --accent: #26d6c5;
+    --accent-foreground: #041416;
+    --muted: #11263a;
+    --muted-foreground: #a6bacb;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-canvas text-foreground;
+    min-height: 100vh;
+    background-color: var(--canvas);
+    background-image: radial-gradient(circle at 78% 16%, rgba(38, 214, 197, 0.1), transparent 28%), radial-gradient(circle at 18% 100%, rgba(52, 107, 255, 0.08), transparent 26%);
+  }
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground);
+  opacity: 0.3;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  opacity: 0.5;
+}
