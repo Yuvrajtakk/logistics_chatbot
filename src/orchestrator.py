@@ -26,6 +26,7 @@ from src.validator import validate_sql, ValidationError
 from src.execute import run_with_repair, ExecutionError
 from src.retrieval import search_reviews
 from src.memory import ConversationMemory
+from src.sql_agent import run_sql_agent  # Phase 6: owns the full SQL pipeline
 
 
 # The classification prompt is intentionally tiny -- one decision,
@@ -72,54 +73,36 @@ def classify_question(question: str) -> str:
 
 def run_sql_pipeline(question: str, memory: ConversationMemory = None):
     """
-    The existing SQL path: build prompt → generate SQL → validate →
-    execute (with up-to-2-retry repair loop). Returns (columns, rows)
-    on success, or raises ExecutionError / ValidationError if it fails
-    after retries.
+    Phase 6 shim: delegates to sql_agent.run_sql_agent(), which owns
+    the complete, correctly-ordered pipeline:
+        generate → REFUSE check → validate → categorical check → execute+repair
 
-    Kept as a named function so orchestrate() can call it cleanly for
-    both the "sql" and "both" routes without duplicating the logic.
+    Kept as a named function for any code that still calls it by name,
+    but orchestrate() now calls run_sql_agent() directly so it can
+    surface all four statuses (ok / refused / flagged / error) in the
+    result dict without losing information.
+
+    This shim translates back to (columns, rows)-or-raise for callers
+    that expect the old tuple interface. The "flagged" status collapses
+    to ValidationError here -- callers that need the full flagged detail
+    (problems list, suggestions dict) should call run_sql_agent() directly.
     """
-    llm = get_llm()
+    result = run_sql_agent(question, memory=memory)
 
-    # Build the retrieval-augmented prompt -- only relevant schema
-    # cards + examples for THIS question, not the entire manifest.
-    prompt = build_prompt(question, memory=memory)
-
-    def regenerate_fn(failed_sql: str, error_message: str) -> str:
-        """
-        Repair stub: feed the failed SQL + error back to the LLM and
-        ask for a corrected version. Called by run_with_repair() on
-        each retry -- same bounded-retry pattern from execute.py.
-        """
-        repair_prompt = (
-            f"{prompt}\n\n"
-            f"The previous SQL attempt failed with this error:\n"
-            f"  {error_message}\n\n"
-            f"The failing SQL was:\n"
-            f"  {failed_sql}\n\n"
-            f"Write a corrected SQL query. Reply with ONLY the SQL, no explanation.\n"
-            f"SQL:"
-        )
-        return llm.invoke(repair_prompt).content.strip()
-
-    # First LLM call: generate SQL from the prompt.
-    raw_sql = llm.invoke(prompt).content.strip()
-
-    # The prompt tells the LLM to reply with exactly "REFUSE: <reason>"
-    # when it can't answer the question. Detect that here before trying
-    # to parse it as SQL -- validate_sql() would raise ParseError on it,
-    # which is confusing and misleading. Raise ValidationError directly
-    # so orchestrate()'s error-handling sees a clean, descriptive message.
-    if raw_sql.upper().startswith("REFUSE:"):
-        raise ValidationError(raw_sql)
-
-    # Validate before touching the database.
-    validated_sql = validate_sql(raw_sql)
-
-    # Execute with repair loop (max 2 retries, per execute.py's MAX_RETRIES).
-    columns, rows = run_with_repair(validated_sql, regenerate_fn)
-    return columns, rows
+    if result["status"] == "ok":
+        return result["columns"], result["rows"]
+    elif result["status"] == "refused":
+        raise ValidationError(result["reason"])
+    elif result["status"] == "flagged":
+        # Collapse to ValidationError -- loses suggestions, but this shim
+        # exists only for backward compat; use run_sql_agent() for full info.
+        raise ValidationError(f"Categorical flag: {result['problems']}")
+    else:  # "error"
+        err_type = result.get("error", "ExecutionError")
+        detail = result.get("detail", "unknown error")
+        if err_type == "ExecutionError":
+            raise ExecutionError(detail)
+        raise ValidationError(detail)
 
 
 def run_reviews_pipeline(question: str, k: int = 5):
@@ -162,14 +145,44 @@ def orchestrate(question: str, memory: ConversationMemory = None) -> dict:
 
     if route == "sql":
         try:
-            columns, rows = run_sql_pipeline(question, memory=memory)
-            return {"route": "sql", "columns": columns, "rows": rows}
-        except (ValidationError, ExecutionError) as e:
-            return {"route": "sql", "error": type(e).__name__, "detail": str(e)}
+            # Call run_sql_agent() directly -- it handles all four outcomes
+            # (ok / refused / flagged / error) and always returns a dict.
+            agent_result = run_sql_agent(question, memory=memory)
+
+            if agent_result["status"] == "ok":
+                # Success: query ran, rows returned.
+                return {
+                    "route": "sql",
+                    "sql": agent_result["sql"],
+                    "columns": agent_result["columns"],
+                    "rows": agent_result["rows"],
+                }
+            elif agent_result["status"] == "refused":
+                # LLM said the question is out of scope.
+                return {
+                    "route": "sql",
+                    "refused": True,
+                    "reason": agent_result["reason"],
+                }
+            elif agent_result["status"] == "flagged":
+                # Categorical check caught a bad value -- never ran the query.
+                return {
+                    "route": "sql",
+                    "flagged": True,
+                    "sql": agent_result["sql"],
+                    "problems": agent_result["problems"],
+                    "suggestions": agent_result["suggestions"],
+                }
+            else:  # "error"
+                return {
+                    "route": "sql",
+                    "error": agent_result["error"],
+                    "detail": agent_result["detail"],
+                }
         except Exception as e:
-            # Safety net: any other unexpected exception (e.g. LLM network
-            # error, Chroma timeout) should still return a dict, not crash
-            # the caller. Log it visibly so it's not silently swallowed.
+            # Safety net: run_sql_agent() should never raise (it catches
+            # internally), but keep this here in case of import errors,
+            # etc. Log it visibly so it's not silently swallowed.
             print(f"[orchestrator] Unexpected error in sql pipeline: {type(e).__name__}: {e}")
             return {"route": "sql", "error": type(e).__name__, "detail": str(e)}
 
@@ -184,10 +197,19 @@ def orchestrate(question: str, memory: ConversationMemory = None) -> dict:
         result = {"route": "both"}
 
         try:
-            columns, rows = run_sql_pipeline(question, memory=memory)
-            result["columns"] = columns
-            result["rows"] = rows
-        except (ValidationError, ExecutionError) as e:
+            agent_result = run_sql_agent(question, memory=memory)
+            if agent_result["status"] == "ok":
+                result["sql"] = agent_result["sql"]
+                result["columns"] = agent_result["columns"]
+                result["rows"] = agent_result["rows"]
+            elif agent_result["status"] == "refused":
+                result["sql_refused"] = agent_result["reason"]
+            elif agent_result["status"] == "flagged":
+                result["sql_flagged"] = agent_result["problems"]
+                result["sql_suggestions"] = agent_result["suggestions"]
+            else:  # "error"
+                result["sql_error"] = agent_result.get("detail", "unknown error")
+        except Exception as e:
             result["sql_error"] = str(e)
 
         try:

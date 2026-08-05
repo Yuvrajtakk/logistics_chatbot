@@ -20,9 +20,15 @@ Why this file exists (plain English):
 # finding the closest matches -- no install needed, same spirit as
 # sqlite3 already being built-in.
 import difflib
+import os
 import sqlite3
 import sqlglot
 from sqlglot import exp
+
+# __file__-relative path, same pattern as execute.py and retrieval.py.
+# This makes load_real_values() work regardless of what directory the
+# process was launched from -- not just when run from the repo root.
+_DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "olist.db")
 
 # ----------------------------------------------------------------------
 # STEP 1: Which columns actually need this check?
@@ -45,7 +51,7 @@ CATEGORICAL_COLUMNS = {
 # ----------------------------------------------------------------------
 # STEP 2: Load the REAL distinct values from the live database.
 # ----------------------------------------------------------------------
-def load_real_values(db_path="data/olist.db"):
+def load_real_values(db_path=None):
     """
     Connects to olist.db (read-only) and, for each tracked categorical
     column, runs SELECT DISTINCT to get the real ground-truth values.
@@ -60,9 +66,16 @@ def load_real_values(db_path="data/olist.db"):
     We use a SET (not a list) because checking "is X in this set" is
     fast and exactly the kind of membership test sets are built for.
     """
+    # Default to the __file__-relative path when no explicit path is given.
+    # Using `None` sentinel instead of the value directly in the signature
+    # so that the computed default is evaluated at call time, not at import
+    # time -- avoids any edge cases with module-level path resolution.
+    if db_path is None:
+        db_path = _DEFAULT_DB_PATH
+
     # Open read-only -- this file must NEVER be able to write to the DB.
     # Same read-only URI trick used in execute.py.
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = sqlite3.connect(f"file:{os.path.abspath(db_path)}?mode=ro", uri=True)
     cursor = conn.cursor()
 
     real_values = {}

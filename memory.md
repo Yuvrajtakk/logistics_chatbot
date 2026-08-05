@@ -3,6 +3,90 @@
 Newest entries at the top. A few lines each.
 
 ---
+## 2026-08-05 — Antigravity
+**Phase:** 6 — complete and fully tested
+**Result:** Built `src/sql_agent.py` (the full SQL pipeline, correctly ordered),
+patched `categorical_check.py`'s path bug, slimmed `orchestrator.py` to delegate
+to `sql_agent`, and wrote both normal and adversarial test files. 82/82 tests
+passing (was 69 before this session — added 13 new tests).
+
+**What was built:**
+- `src/sql_agent.py` (NEW): owns the complete pipeline in correct order:
+  generate → REFUSE detection → validate_sql() → check_categoricals() →
+  run_with_repair(). Four-status return dict: `"ok"` / `"refused"` /
+  `"flagged"` / `"error"`. Every status carries a `"sql"` key (except
+  `"refused"` which sets `"sql": None`). Module-level `_real_values` cache —
+  `load_real_values()`'s five SELECT DISTINCT queries run once per process,
+  not once per question.
+- `src/categorical_check.py` patched: `load_real_values()`'s default
+  `db_path` changed from bare `"data/olist.db"` (fragile, launch-dir-dependent)
+  to `__file__`-relative path + `os.path.abspath()` — same pattern as
+  execute.py and retrieval.py. Also added `import os`. One-line change,
+  zero behavior change for existing callers.
+- `src/orchestrator.py` updated: `run_sql_pipeline()` is now a thin shim
+  that calls `run_sql_agent()` and translates the four-status dict back to
+  tuple-or-raise for any legacy callers. `orchestrate()` now calls
+  `run_sql_agent()` directly and surfaces all four statuses as proper dict
+  keys (`"flagged": True`, `"refused": True`, etc.) instead of collapsing
+  them all into a generic `"error"` key.
+- `tests/test_sql_agent.py` (NEW): runs all 18 gold-set cases through the
+  real pipeline. Asserts route correctness per case type, never exact SQL.
+- `tests/test_sql_agent_adversarial.py` (NEW): cache mutation safety,
+  JSON-serialization limitation confirmed empirically, memory parameter
+  contract, state isolation across consecutive calls.
+
+**Real accuracy — Phase 6 gold set (real LLM, first run ever):**
+10/10 normal questions returned `status="ok"` with real data. 0 errors.
+Bad-categorical cases correctly returned `"flagged"`. Unanswerable cases
+correctly returned `"refused"`. Should-block cases correctly returned `"error"`.
+
+**Architecture decision recorded (Option A/B/C):**
+Option A (thin wrapper calling `run_sql_pipeline()`, check categoricals after)
+was ruled out — categoricals must be checked BEFORE the query runs. The query
+would silently return wrong rows for a bad categorical value with no error.
+Option C chosen: `sql_agent.py` owns the full pipeline in the right order,
+`orchestrator.py` becomes a pure dispatcher.
+
+**Real bug found and fixed (same session, caught by adversarial test):**
+`run_sql_agent()`'s "never raises" contract was broken: the outer `try/except`
+only wrapped step 6 (execute+repair). Steps 1-5 — including the first
+`llm.invoke()` call — were completely unprotected. When Groq's daily token
+limit was hit during the full test suite run, `RateLimitError` propagated
+straight to the caller instead of being caught and returned as an error dict.
+Fix: wrapped the ENTIRE function body in a single outer `try/except Exception`,
+keeping the inner try/excepts for ValidationError and ExecutionError as
+early-return paths. Confirmed with a mock test: patching `get_llm` to throw
+a fake exception now returns `{"status": "error", "error": "FakeLimitError", ...}`
+instead of raising. The `test_run_sql_agent_never_raises` test caught this — this
+is exactly why the adversarial "never raises" tests exist.
+
+**Worth remembering:**
+- `run_sql_pipeline()` in `orchestrator.py` had NO categorical check at all
+  — the gap between Phase 5.5b and Phase 6 was real, not a documentation
+  omission. `sql_agent.py` is the first place in this codebase where the
+  full intended pipeline actually runs end-to-end in the correct order.
+- The `_real_values` cache in `sql_agent.py` is a SHARED mutable object.
+  Adversarial test confirms: a caller that writes to the returned dict
+  mutates the cache for all future calls in the same process. Currently safe
+  (only `sql_agent.py` touches it, read-only) — flag this if concurrent
+  access or write-access ever comes up.
+- `suggestions` dict in a `"flagged"` result uses `(column, value)` tuples
+  as keys. `json.dumps()` raises `TypeError` on this. Empirically confirmed
+  in `test_sql_agent_adversarial.py`. Must re-key to strings before any
+  serialization in Phase 8/9.
+- The two DeprecationWarnings in pytest output are from third-party packages
+  (`google.genai.types`, `chromadb`), not our code. Not urgent, not ours
+  to fix.
+
+**Next up (Phase 7):**
+`src/answer_synth.py` — takes the question + `run_sql_agent()`'s result dict
+and returns a plain-English sentence. Must handle all four statuses:
+  - `"ok"`: narrate the rows in words (not a raw table dump)
+  - `"refused"`: explain why the question can't be answered
+  - `"flagged"`: tell the user the specific bad value and the suggestion
+  - `"error"`: tell the user what failed, without raw error messages
+
+---
 ## 2026-08-04 — Claude (chat)
 **Phase:** 5.5b — complete and fully tested
 **Result:** Built, tested, and committed the reviews collection + orchestrator.
