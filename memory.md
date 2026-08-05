@@ -4,6 +4,18 @@ Newest entries at the top. A few lines each.
 
 ---
 ## 2026-08-05 — Antigravity
+**Phase:** 8 & 9 — complete and ready for handoff
+**Result:** Built `src/chat_cli.py` (Phase 8), the interactive terminal loop. Wrote the final `README.md` (Phase 9) and confirmed `requirements.txt` is complete.
+- `chat_cli.py` parses the `--provider` CLI flag and injects it into `src.llm_client.DEFAULT_PROVIDER` at startup, ensuring all downstream LLM calls respect the user's choice effortlessly.
+- Initializes a `ConversationMemory` instance and manages the loop: user input -> orchestrate -> synthesize -> print -> store in memory.
+- Handles empty inputs and clean exits (`exit` or `quit`).
+
+**Worth remembering:**
+- An edge case was discovered during live testing: typing `exit()` instead of `exit` passed straight through to the LLM as a question. The system handled it beautifully (the LLM refused it as SQL, and the reviews route returned a comment mentioning "O fim" (The end)), proving the robust pipeline safety in action. A funny reminder that users don't always type what you expect, but the pipeline's deterministic routing prevents crashes.
+- The project is now fully complete per `PROJECT.md`!
+
+---
+## 2026-08-05 — Antigravity
 **Phase:** 7 — complete and fully tested
 **Result:** Built `src/answer_synth.py` to synthesize the orchestrator's result dict into plain English. 
 - Handles all four SQL statuses (ok, refused, flagged, error).
