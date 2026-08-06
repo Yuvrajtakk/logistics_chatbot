@@ -5,7 +5,18 @@ Assembles the full prompt handed to the LLM for SQL generation.
 Pulls relevant context (schema, examples) and conversation memory.
 """
 
-from src.semantic_loader import load_glossary
+from src.semantic_loader import load_examples, load_glossary, load_schema_cards
+
+
+def _fallback_context() -> tuple[list[str], list[str]]:
+    """Build deterministic context when the optional local vector store is absent."""
+    schema_snippets = []
+    for table_name, table_info in load_schema_cards().items():
+        columns = ", ".join(table_info["columns"].keys())
+        schema_snippets.append(f"TABLE: {table_name}\n  {table_info['description'].strip()}\n  COLUMNS: {columns}")
+
+    example_snippets = [f"Q: {example['question']}\nSQL: {example['sql']}" for example in load_examples()]
+    return schema_snippets, example_snippets
 
 def format_glossary(glossary: dict) -> str:
     """
@@ -32,12 +43,15 @@ def build_prompt(question: str, memory=None) -> str:
     Returns:
         str: The full prompt string.
     """
-    from src.retrieval import search_context
+    try:
+        from src.retrieval import search_context
 
-    results = search_context(question, k=5)
-
-    schema_snippets = [r.page_content for r in results if r.metadata.get("source") == "schema"]
-    example_snippets = [r.page_content for r in results if r.metadata.get("source") == "example"]
+        results = search_context(question, k=5)
+        schema_snippets = [r.page_content for r in results if r.metadata.get("source") == "schema"]
+        example_snippets = [r.page_content for r in results if r.metadata.get("source") == "example"]
+    except Exception as error:
+        print(f"[prompt_builder] Vector context unavailable; using static context: {type(error).__name__}")
+        schema_snippets, example_snippets = _fallback_context()
 
     glossary = load_glossary()
 

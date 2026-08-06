@@ -2,6 +2,8 @@ pandas
 sqlglot
 pytest
 python-dotenv
+fastapi
+uvicorn[standard]
 langchain-groq
 langchain-google-genai
 langchain-ollama

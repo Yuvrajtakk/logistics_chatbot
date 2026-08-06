@@ -1,4 +1,5 @@
 import os
+from contextvars import ContextVar
 from dotenv import load_dotenv
 
 from langchain_groq import ChatGroq
@@ -8,6 +9,7 @@ from langchain_ollama import ChatOllama
 load_dotenv()
 
 DEFAULT_PROVIDER = "groq"
+REQUEST_PROVIDER: ContextVar[str | None] = ContextVar("request_provider", default=None)
 TEMPERATURE = 0
 
 GROQ_MODEL = "llama-3.3-70b-versatile"
@@ -26,7 +28,7 @@ def get_llm(provider: str = None):
         BaseChatModel: A LangChain chat model instance.
     """
     if provider is None:
-        provider = DEFAULT_PROVIDER
+        provider = REQUEST_PROVIDER.get() or DEFAULT_PROVIDER
     provider = provider.lower()
 
     if provider == "groq":

@@ -26,7 +26,7 @@ def _get_real_values() -> dict:
     return _real_values
 
 
-def run_sql_agent(question: str, memory: ConversationMemory = None) -> dict:
+def run_sql_agent(question: str, memory: ConversationMemory = None, provider: str = None) -> dict:
     """
     Runs the full SQL pipeline for a single question.
     
@@ -39,7 +39,7 @@ def run_sql_agent(question: str, memory: ConversationMemory = None) -> dict:
               categorical flag details, or an error.
     """
     try:
-        llm = get_llm()
+        llm = get_llm(provider)
         prompt = build_prompt(question, memory=memory)
         raw_sql = llm.invoke(prompt).content.strip()
 

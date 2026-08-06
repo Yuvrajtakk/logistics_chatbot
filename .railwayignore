@@ -1,0 +1,15 @@
+.git
+.env
+.pytest_cache
+venv
+__pycache__
+*.pyc
+tests
+eval
+web/node_modules
+web/.next
+web/output
+web/.playwright-cli
+data/raw
+data/chroma_db
+*.log

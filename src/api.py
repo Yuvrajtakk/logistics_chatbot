@@ -4,6 +4,8 @@
 # (single-user demo scale) — do not add Redis/DB-backed sessions unless
 # that's ever genuinely needed (YAGNI).
 
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -14,14 +16,25 @@ from src.memory import ConversationMemory
 import src.llm_client
 
 app = FastAPI()
+_allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # web/ dev server
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 _sessions: dict[str, ConversationMemory] = {}
+
+
+@app.get("/health")
+def health():
+    """Small unauthenticated probe used by the hosting platform."""
+    return {"status": "ok"}
 
 class ChatRequest(BaseModel):
     question: str
@@ -30,11 +43,11 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
-    src.llm_client.DEFAULT_PROVIDER = req.provider
     memory = _sessions.setdefault(req.session_id, ConversationMemory())
+    provider = "groq" if os.getenv("RAILWAY_ENVIRONMENT") else req.provider
 
-    result = orchestrate(req.question, memory=memory)
-    answer = synthesize_answer(req.question, result)
+    result = orchestrate(req.question, memory=memory, provider=provider)
+    answer = synthesize_answer(req.question, result, provider=provider)
     memory.add_turn(question=req.question, tool=result.get("route", "unknown"), answer=answer)
 
     return {
@@ -46,4 +59,10 @@ def chat(req: ChatRequest):
 @app.get("/api/providers")
 def providers():
     # Gemini is intentionally reported unavailable — see Section 6.
-    return {"groq": True, "ollama": True, "gemini": False}
+    is_production = bool(os.getenv("RAILWAY_ENVIRONMENT"))
+    return {
+        "groq": True,
+        "ollama": not is_production,
+        "gemini": False,
+        "provider_mode": "groq-only" if is_production else "selectable",
+    }

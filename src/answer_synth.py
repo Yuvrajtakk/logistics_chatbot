@@ -22,7 +22,7 @@ The quote should be kept in the original Portuguese, followed immediately by a b
 Do not write anything else. Just the summary.
 """
 
-def synthesize_answer(question: str, result: dict) -> str:
+def synthesize_answer(question: str, result: dict, provider: str = None) -> str:
     """
     Takes the orchestrator's result dict and returns a plain-English answer.
     Never raises an exception to the caller.
@@ -33,9 +33,9 @@ def synthesize_answer(question: str, result: dict) -> str:
         if route == "sql":
             return _synthesize_sql(result)
         elif route == "reviews":
-            return _synthesize_reviews(question, result)
+            return _synthesize_reviews(question, result, provider)
         elif route == "both":
-            return _synthesize_both(question, result)
+            return _synthesize_both(question, result, provider)
         else:
             return "I couldn't understand the result from the system."
     except Exception as e:
@@ -59,7 +59,7 @@ def _synthesize_sql(result: dict) -> str:
     return _narrate_sql_rows(result.get("columns", []), result.get("rows", []))
 
 
-def _synthesize_reviews(question: str, result: dict) -> str:
+def _synthesize_reviews(question: str, result: dict, provider: str = None) -> str:
     if "error" in result:
         return "I couldn't search customer reviews for this question."
         
@@ -67,15 +67,15 @@ def _synthesize_reviews(question: str, result: dict) -> str:
     if not documents:
         return "I searched the customer reviews, but couldn't find any relevant comments for that question."
         
-    return _summarize_documents(question, documents)
+    return _summarize_documents(question, documents, provider)
 
 
-def _summarize_documents(question: str, documents: list) -> str:
+def _summarize_documents(question: str, documents: list, provider: str = None) -> str:
     reviews_text = "\n".join(f"- {doc.page_content}" for doc in documents)
     prompt = _REVIEWS_PROMPT.format(question=question, reviews_text=reviews_text)
     
     try:
-        llm = get_llm()
+        llm = get_llm(provider)
         reply = llm.invoke(prompt).content.strip()
         return reply
     except Exception as e:
@@ -83,7 +83,7 @@ def _summarize_documents(question: str, documents: list) -> str:
         return "I found relevant reviews but couldn't summarize them right now."
 
 
-def _synthesize_both(question: str, result: dict) -> str:
+def _synthesize_both(question: str, result: dict, provider: str = None) -> str:
     if result.get("sql_error") and result.get("reviews_error"):
         return "I encountered a technical issue and couldn't answer this question right now."
 
@@ -110,7 +110,7 @@ def _synthesize_both(question: str, result: dict) -> str:
         if not docs:
             reviews_part = "I searched the customer reviews, but couldn't find any relevant comments for that question."
         else:
-            reviews_part = _summarize_documents(question, docs)
+            reviews_part = _summarize_documents(question, docs, provider)
     else:
         reviews_part = "I couldn't search customer reviews for this question."
 

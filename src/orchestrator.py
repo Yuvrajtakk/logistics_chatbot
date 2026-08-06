@@ -38,7 +38,7 @@ Latest Question: {question}
 Rewritten Question:"""
 
 
-def rewrite_question(question: str, memory: ConversationMemory = None) -> str:
+def rewrite_question(question: str, memory: ConversationMemory = None, provider: str = None) -> str:
     """
     Rewrites a follow-up question into a standalone question using the conversation history.
     """
@@ -49,18 +49,18 @@ def rewrite_question(question: str, memory: ConversationMemory = None) -> str:
     if not history:
         return question
         
-    llm = get_llm()
+    llm = get_llm(provider)
     prompt = _REWRITE_PROMPT.format(history=history, question=question)
     rewritten = llm.invoke(prompt).content.strip()
     return rewritten
 
 
-def classify_question(question: str) -> str:
+def classify_question(question: str, provider: str = None) -> str:
     """
     Classifies the user's question into 'sql', 'reviews', or 'both'.
     Falls back to 'sql' on unexpected output.
     """
-    llm = get_llm()
+    llm = get_llm(provider)
     prompt = _CLASSIFY_PROMPT.format(question=question)
     raw = llm.invoke(prompt).content.strip().lower()
 
@@ -71,12 +71,12 @@ def classify_question(question: str) -> str:
     return "sql"
 
 
-def run_sql_pipeline(question: str, memory: ConversationMemory = None):
+def run_sql_pipeline(question: str, memory: ConversationMemory = None, provider: str = None):
     """
     Delegates to sql_agent.run_sql_agent() and translates back to the legacy
     (columns, rows) tuple interface. Kept for backward compatibility.
     """
-    result = run_sql_agent(question, memory=memory)
+    result = run_sql_agent(question, memory=memory, provider=provider)
 
     if result["status"] == "ok":
         return result["columns"], result["rows"]
@@ -99,20 +99,20 @@ def run_reviews_pipeline(question: str, k: int = 5):
     return search_reviews(question, k=k)
 
 
-def orchestrate(question: str, memory: ConversationMemory = None) -> dict:
+def orchestrate(question: str, memory: ConversationMemory = None, provider: str = None) -> dict:
     """
     The single public entry point for the chatbot pipeline.
     Classifies the question and runs the corresponding pipelines.
     Always returns a dictionary describing the result.
     """
-    contextualized_question = rewrite_question(question, memory)
+    contextualized_question = rewrite_question(question, memory, provider=provider)
     print(f"[orchestrator] Original: '{question}' -> Rewritten: '{contextualized_question}'")
     
-    route = classify_question(contextualized_question)
+    route = classify_question(contextualized_question, provider=provider)
 
     if route == "sql":
         try:
-            agent_result = run_sql_agent(contextualized_question, memory=memory)
+            agent_result = run_sql_agent(contextualized_question, memory=memory, provider=provider)
 
             if agent_result["status"] == "ok":
                 return {
@@ -156,7 +156,7 @@ def orchestrate(question: str, memory: ConversationMemory = None) -> dict:
         result = {"route": "both"}
 
         try:
-            agent_result = run_sql_agent(contextualized_question, memory=memory)
+            agent_result = run_sql_agent(contextualized_question, memory=memory, provider=provider)
             if agent_result["status"] == "ok":
                 result["sql"] = agent_result["sql"]
                 result["columns"] = agent_result["columns"]
