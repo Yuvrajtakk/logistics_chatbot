@@ -9,9 +9,10 @@ import { Button } from "@/components/ui/button";
 type DropdownMenuProps = {
   options: { label: string; onClick: () => void; Icon?: React.ReactNode }[];
   children: React.ReactNode;
+  footerNote?: string;
 };
 
-const DropdownMenu = ({ options, children }: DropdownMenuProps) => {
+const DropdownMenu = ({ options, children, footerNote }: DropdownMenuProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -66,6 +67,11 @@ const DropdownMenu = ({ options, children }: DropdownMenuProps) => {
                 {option.label}
               </button>
             )) : <div className="px-3 py-2 text-xs text-muted-foreground">No providers available</div>}
+            {footerNote && (
+              <div className="mt-1 border-t border-border/50 px-3 py-2 text-[11px] leading-tight text-muted-foreground/70">
+                {footerNote}
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

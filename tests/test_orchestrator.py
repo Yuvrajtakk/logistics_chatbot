@@ -143,3 +143,46 @@ def test_result_always_has_route_key():
             f"orchestrate() returned a dict without 'route' key for: '{q}'\n"
             f"Result was: {result}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Provider Propagation
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch, MagicMock
+from src.memory import ConversationMemory
+
+@patch("src.llm_client.get_llm")
+@patch("src.orchestrator.run_sql_agent")
+def test_provider_reaches_orchestration_stages(mock_run_sql, mock_get_llm):
+    """
+    Proves that provider="groq" reaches every orchestration stage.
+    """
+    mock_llm = MagicMock()
+    # Mock rewrite to return the question, classify to return 'sql'
+    mock_llm.invoke.return_value.content = "sql"
+    mock_get_llm.return_value = mock_llm
+    
+    mock_run_sql.return_value = {"status": "ok", "sql": "SELECT 1", "columns": ["a"], "rows": []}
+    
+    # We provide a memory to force rewrite_question to call the LLM
+    memory = ConversationMemory()
+    memory.add_turn("history?", "sql", "yes")
+    
+    result = orchestrate("new question", memory=memory, provider="groq")
+    
+    assert result["route"] == "sql"
+    
+    # Ensure get_llm was called, specifically with 'groq'
+    # get_llm should be called twice (rewrite_question, classify_question)
+    assert mock_get_llm.call_count >= 1
+    for call in mock_get_llm.call_args_list:
+        args, kwargs = call
+        if args:
+            assert args[0] == "groq"
+        else:
+            assert kwargs.get("provider") == "groq"
+            
+    # Ensure the downstream sql_agent received the provider
+    mock_run_sql.assert_called_once()
+    assert mock_run_sql.call_args.kwargs.get("provider") == "groq"

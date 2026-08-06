@@ -12,6 +12,7 @@ import { SplineScene } from "@/components/ui/splite";
 
 type ProviderState = { groq: boolean; ollama: boolean; gemini: boolean };
 type Message = { id: string; role: "user" | "assistant"; content: string; route?: string; sql?: string };
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000").replace(/\/$/, "");
 
 const SUGGESTED_QUESTIONS = [
   "Which product categories have the highest late-delivery rate?",
@@ -33,7 +34,7 @@ export default function Home() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    fetch("http://localhost:8000/api/providers")
+    fetch(`${API_BASE_URL}/api/providers`)
       .then((res) => res.json())
       .then((data) => setProviders({ groq: data.groq ?? true, ollama: data.ollama ?? true, gemini: data.gemini ?? false }))
       .catch(() => undefined);
@@ -57,7 +58,7 @@ export default function Home() {
     setInputValue("");
     setIsLoading(true);
     try {
-      const response = await fetch("http://localhost:8000/api/chat", {
+      const response = await fetch(`${API_BASE_URL}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, provider: selectedProvider, session_id: "demo-session" }),
@@ -111,6 +112,7 @@ export default function Home() {
                   ...(providers.groq ? [{ label: "Groq", onClick: () => setSelectedProvider("groq"), Icon: selectedProvider === "groq" ? <CheckCircle2 className="h-4 w-4 text-accent" /> : undefined }] : []),
                   ...(providers.ollama ? [{ label: "Ollama · Local", onClick: () => setSelectedProvider("ollama"), Icon: selectedProvider === "ollama" ? <CheckCircle2 className="h-4 w-4 text-accent" /> : undefined }] : []),
                 ]}
+                footerNote={!providers.ollama ? "Ollama is available when running this project locally." : undefined}
               >
                 <span>{selectedProvider === "groq" ? "Groq" : "Ollama · Local"}</span>
               </DropdownMenu>

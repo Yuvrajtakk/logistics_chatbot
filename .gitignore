@@ -8,3 +8,10 @@ data/chroma_db/
 .pytest_cache/
 .vscode/
 *.log
+
+# Web build & tooling artifacts
+web/.next/
+web/node_modules/
+web/.playwright-cli/
+web/output/
+web/.vercel/
