@@ -5,13 +5,13 @@ Phase 5.5b: The entry point for a single question from the user.
 Classifies the question and dispatches to the appropriate deterministic pipeline.
 """
 
-from src.llm_client import get_llm
-from src.prompt_builder import build_prompt
-from src.validator import validate_sql, ValidationError
-from src.execute import run_with_repair, ExecutionError
+import src.llm_client as llm_client
+# Backward‑compatible alias for tests that monkeypatch src.orchestrator.get_llm
+get_llm = llm_client.get_llm
 from src.retrieval import search_reviews
 from src.memory import ConversationMemory
-from src.sql_agent import run_sql_agent 
+from src.sql_agent import run_sql_agent
+import re
 
 _CLASSIFY_PROMPT = """\
 You are a question router for a Brazilian e-commerce chatbot.
@@ -37,59 +37,82 @@ Conversation History:
 Latest Question: {question}
 Rewritten Question:"""
 
+_GREETING_RE = re.compile(r"^(?:hi|hello|hey|good (?:morning|afternoon|evening))\b", re.IGNORECASE)
+_INTRODUCTION_RE = re.compile(r"^(?:my name is|i am|i'm)\s+([A-Za-z][A-Za-z'-]{0,30})\b", re.IGNORECASE)
+
+
+def _conversation_response(question: str, memory: ConversationMemory = None) -> str | None:
+    normalized = question.strip()
+    introduction = _INTRODUCTION_RE.match(normalized)
+    if introduction:
+        name = introduction.group(1)
+        if memory:
+            memory.user_name = name
+        return f"Nice to meet you, {name}. Ask me about Olist orders, payments, deliveries, sellers, or customer reviews."
+
+    if _GREETING_RE.match(normalized):
+        name = getattr(memory, "user_name", None) if memory else None
+        return f"Hello{', ' + name if name else ''}! I can help with Olist order analytics and customer-review themes."
+
+    lowered = normalized.lower()
+    project_help = (
+        lowered in {"help", "what can you do?", "what can you do"}
+        or "what can this chatbot" in lowered
+        or "about this project" in lowered
+        or "what data" in lowered
+    )
+    if project_help:
+        return (
+            "This chatbot answers questions about historical Olist Brazilian e-commerce data from 2016–2018. "
+            "Ask for order, payment, delivery, seller, product, or customer-review insights; it cannot provide live data, "
+            "profit margins, or facts outside this dataset."
+        )
+    return None
+
 
 def rewrite_question(question: str, memory: ConversationMemory = None, provider: str = None) -> str:
     """
-    Rewrites a follow-up question into a standalone question using the conversation history.
+    Rewrites a follow‑up question into a standalone question using the conversation history.
+    If the LLM call fails (e.g., rate limit), returns the original question unchanged.
     """
     if not memory:
         return question
-        
+    
     history = memory.format_for_prompt()
     if not history:
         return question
-        
-    llm = get_llm(provider)
+    
+    llm = llm_client.get_llm(provider)
     prompt = _REWRITE_PROMPT.format(history=history, question=question)
-    rewritten = llm.invoke(prompt).content.strip()
+    try:
+        rewritten = llm.invoke(prompt).content.strip()
+    except Exception as e:
+        print(f"[orchestrator] rewrite_question LLM error ({type(e).__name__}): {e}. Using original question.")
+        return question
     return rewritten
 
 
 def classify_question(question: str, provider: str = None) -> str:
     """
     Classifies the user's question into 'sql', 'reviews', or 'both'.
-    Falls back to 'sql' on unexpected output.
+    Falls back to 'sql' on unexpected output or LLM errors (e.g., rate limits).
     """
-    llm = get_llm(provider)
+    # Quick intent gate for sentiment questions
+    lowered = question.lower()
+    if any(tok in lowered for tok in ["sentiment", "feel", "opinion", "review"]):
+        return "reviews"
+    llm = llm_client.get_llm(provider)
     prompt = _CLASSIFY_PROMPT.format(question=question)
-    raw = llm.invoke(prompt).content.strip().lower()
-
+    try:
+        raw = llm.invoke(prompt).content.strip().lower()
+    except Exception as e:
+        # Log the error and fallback safely
+        print(f"[orchestrator] classify_question LLM error ({type(e).__name__}): {e}. Falling back to 'sql'.")
+        return "sql"
     if raw in ("sql", "reviews", "both"):
         return raw
-
     print(f"[orchestrator] Unexpected classification '{raw}' — falling back to 'sql'.")
     return "sql"
-
-
-def run_sql_pipeline(question: str, memory: ConversationMemory = None, provider: str = None):
-    """
-    Delegates to sql_agent.run_sql_agent() and translates back to the legacy
-    (columns, rows) tuple interface. Kept for backward compatibility.
-    """
-    result = run_sql_agent(question, memory=memory, provider=provider)
-
-    if result["status"] == "ok":
-        return result["columns"], result["rows"]
-    elif result["status"] == "refused":
-        raise ValidationError(result["reason"])
-    elif result["status"] == "flagged":
-        raise ValidationError(f"Categorical flag: {result['problems']}")
-    else:
-        err_type = result.get("error", "ExecutionError")
-        detail = result.get("detail", "unknown error")
-        if err_type == "ExecutionError":
-            raise ExecutionError(detail)
-        raise ValidationError(detail)
 
 
 def run_reviews_pipeline(question: str, k: int = 5):
@@ -105,6 +128,10 @@ def orchestrate(question: str, memory: ConversationMemory = None, provider: str 
     Classifies the question and runs the corresponding pipelines.
     Always returns a dictionary describing the result.
     """
+    conversational_response = _conversation_response(question, memory)
+    if conversational_response:
+        return {"route": "conversation", "message": conversational_response}
+
     contextualized_question = rewrite_question(question, memory, provider=provider)
     print(f"[orchestrator] Original: '{question}' -> Rewritten: '{contextualized_question}'")
     
